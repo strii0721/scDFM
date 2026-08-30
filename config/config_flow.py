@@ -4,7 +4,7 @@ import os
 @dataclass
 class FlowConfig:
     # Flow model type
-    model_type: str = 'hierarchical'
+    model_type: str = 'origin'
 
     # Flow Matching specific parameters
     batch_size: int = 32
@@ -26,7 +26,7 @@ class FlowConfig:
     mode: str = 'predict_y' # predict_y, predict_p
     result_path: str = './result'
     perturbation_fusion_method: str = 'sum' # mlp, sum
-    fusion_method: str = 'cross' # cross , concat, add
+    fusion_method: str = 'differential_perceiver' # cross , concat, add
     infer_top_gene: int = 1000
     n_top_genes: int = 5000
     checkpoint_path: str = ''
@@ -36,6 +36,18 @@ class FlowConfig:
     fold: int = 0
     use_negative_edge: bool = False
     topk: int = 15
+
+    # VCC-2026 mode (data_name='vcc')
+    data_path: str = './data'
+    corpus_path: str = './data/vcc_corpus.h5ad'
+    panel_path: str = './data/vcc_panel_genes.csv'
+    holdout_line: str = ''  # leave-one-line-out validation line
+    line_col: str = 'cell_line'
+    crispr_type_col: str = 'crispr_type'
+    crispr_type_value: str = 'CRISPRi'
+    mask_subsample: int = 50000  # cells for co-expression graph (0 = all)
+    cells_per_target: int = 400
+    max_test_perts: int = 20  # cap on perturbations evaluated per checkpoint (0 = all)
     
     def __post_init__(self):
         if self.data_name == 'norman_umi_go_filtered':

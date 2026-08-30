@@ -6,7 +6,6 @@ from config.config_flow import FlowConfig as Config
 import torch.nn.functional as F
 import time
 from torch.utils.data import Dataset, DataLoader
-import jax
 import random
 from src.data_process.data import Data, PerturbationDataset
 from src.flow_matching.ot import OTPlanSampler
@@ -143,6 +142,9 @@ def test(data_sampler, vf, accelerator,  batch_size=128, path='./',vocab=None,sc
     count = 0
     print('perturbation_name_list:',len(perturbation_name_list))
     for perturbation_name in perturbation_name_list:
+        if config.max_test_perts and count >= config.max_test_perts:
+            break
+        count += 1
         perturbation_data = data_sampler.get_perturbation_data(perturbation_name)
         target = perturbation_data['tgt_cell_data']
         perturbation_id = perturbation_data['condition_id']
@@ -251,10 +253,10 @@ if __name__ == "__main__":
         os.makedirs(save_path, exist_ok=True)
     device = accelerator.device
     
-    data_manager = Data('./data')
+    data_manager = Data(config.data_path, config=config)
 
     data_manager.load_data(config.data_name)
-    data_manager.process_data(n_top_genes=config.n_top_genes, split_method=config.split_method, fold=config.fold, use_negative_edge=config.use_negative_edge, k=config.topk)
+    data_manager.process_data(n_top_genes=config.n_top_genes, infer_top_gene=config.infer_top_gene, split_method=config.split_method, fold=config.fold, use_negative_edge=config.use_negative_edge, k=config.topk)
     train_sampler, valid_sampler, test_dl = data_manager.load_flow_data(batch_size=config.batch_size)
     
     train_dataset = PerturbationDataset(train_sampler, config.batch_size)
@@ -337,5 +339,7 @@ if __name__ == "__main__":
             pbar.update(1)
             pbar.set_description(f'loss: {loss.item():.4f}, iteration: {iteration}')
             iteration += 1
+            if iteration >= config.steps:
+                break
             
             

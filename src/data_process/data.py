@@ -8,8 +8,6 @@ from typing import Union, Optional
 from pathlib import Path
 import os
 from src.utils._preprocessing import annotate_compounds, get_molecular_fingerprints
-from src.data_process._datamanager import DataManager
-import jax
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 import pdb
@@ -20,8 +18,9 @@ from src.utils.utils import build_gene_coexpression_graph,sorted_pad_mask
 # 'norman' url = 'https://dataverse.harvard.edu/api/access/datafile/6154020'
 
 class Data:
-    def __init__(self, data_path='../../data'):
+    def __init__(self, data_path='../../data', config=None):
         self.data_path = data_path
+        self.config = config
         if not os.path.exists(data_path):
             raise ValueError(data_path + ' does not exist')
             # os.makedirs(data_path)
@@ -33,6 +32,8 @@ class Data:
             self.adata = sc.read_h5ad(os.path.join(self.data_path, data_name + '.h5ad'))
         elif data_name in ['combosciplex', ]:
             self.adata = sc.read_h5ad(os.path.join(self.data_path, data_name + '.h5ad'))
+        elif data_name == 'vcc':
+            self.adata = sc.read_h5ad(self.config.corpus_path)
         else:
             raise ValueError(data_name + ' is not a valid data name')
         
@@ -218,6 +219,66 @@ class Data:
             self.unique_perturbation = unique_perturbation
             self.perturbation_dict = {perturbation: i for i, perturbation in enumerate(unique_perturbation)}
             
+        elif self.data_name == 'vcc':
+            cfg = self.config
+            assert cfg is not None, 'vcc mode requires Data(config=...)'
+            cache = os.path.join(self.data_path, self.data_name, f'processed_n{n_top_genes}.h5ad')
+            os.makedirs(os.path.dirname(cache), exist_ok=True)
+            if os.path.exists(cache):
+                print(f'##### loading cached processed h5ad: {cache} #####')
+                self.adata = sc.read_h5ad(cache)
+            else:
+                # 1) CRISPRi only (drop CRISPR KO)
+                if cfg.crispr_type_col and cfg.crispr_type_col in self.adata.obs:
+                    keep = self.adata.obs[cfg.crispr_type_col].astype(str) == cfg.crispr_type_value
+                    print(f'##### vcc: keeping {keep.sum()}/{self.adata.n_obs} {cfg.crispr_type_value} cells #####')
+                    self.adata = self.adata[keep].copy()
+                # 2) condition / is_control from target_gene (single 'non-targeting' label)
+                tg = self.adata.obs['target_gene'].astype(str).to_numpy()
+                is_ctl = tg == 'non-targeting'
+                self.adata.obs['condition'] = np.where(is_ctl, 'control', tg + '+control')
+                self.adata.obs['is_control'] = is_ctl
+                # 3) normalize+log1p on full axis FIRST (scanpy>=1.11 seurat-flavor
+                #    HVG unconditionally expm1's its input, so it must be log-space;
+                #    matches upstream norman convention: normalized full axis -> subset)
+                sc.pp.normalize_total(self.adata, target_sum=1e4)
+                sc.pp.log1p(self.adata)
+                # 4) HVG + force panel genes
+                panel = pd.read_csv(cfg.panel_path, header=None)[0].astype(str).tolist()
+                sc.pp.highly_variable_genes(self.adata, n_top_genes=n_top_genes)
+                hv = self.adata.var['highly_variable'].copy()
+                missing = [g for g in panel if g not in self.adata.var_names]
+                if missing:
+                    print(f'##### vcc: {len(missing)} panel genes not in var_names #####')
+                for g in panel:
+                    if g in self.adata.var_names:
+                        hv.loc[g] = True
+                self.adata.var['highly_variable'] = hv.to_numpy()
+                self.adata = self.adata[:, hv.to_numpy()].copy()
+                self.adata.write(cache)
+                print(f'##### vcc: processed cached to {cache} #####')
+            # 5) leave-one-line-out split
+            assert cfg.holdout_line, 'vcc mode requires --holdout_line'
+            lines = self.adata.obs[cfg.line_col].astype(str)
+            assert cfg.holdout_line in set(lines), f'holdout line {cfg.holdout_line} not in corpus'
+            self.adata.obs['mode'] = np.where(lines == cfg.holdout_line, 'test', 'train')
+            self.adata.obs['Drug1'] = self.adata.obs['condition'].str.split('+').str[0]
+            self.adata.obs['Drug2'] = self.adata.obs['condition'].str.split('+').str[-1]
+            self.adata_train = self.adata[self.adata.obs['mode'] == 'train']
+            self.adata_test = self.adata[self.adata.obs['mode'] == 'test']
+            n_ctl_test = int(self.adata_test.obs['is_control'].sum())
+            assert n_ctl_test > 0, f'holdout line {cfg.holdout_line} has no control cells'
+            print(f'##### vcc: train {self.adata_train.n_obs} cells / test({cfg.holdout_line}) {self.adata_test.n_obs} cells ({n_ctl_test} ctl) #####')
+            sc.pp.highly_variable_genes(self.adata_test, inplace=True, n_top_genes=infer_top_gene)
+            self.adata_test = self.adata_test[:, self.adata_test.var['highly_variable']]
+            condition = np.unique(list(self.adata.obs['condition']))
+            unique_perturbation = []
+            np.array([unique_perturbation.extend(perturbation.split('+')) for perturbation in condition])
+            unique_perturbation = np.unique(unique_perturbation)
+            unique_perturbation.sort()
+            self.unique_perturbation = unique_perturbation
+            self.perturbation_dict = {perturbation: i for i, perturbation in enumerate(unique_perturbation)}
+            self.split_results = []
         else:
             raise ValueError(self.data_name + ' is not a valid data name')
         
@@ -232,7 +293,14 @@ class Data:
         if os.path.exists(mask_path):
             self.mask = torch.load(mask_path)
         else:
-            X = self.adata_train.X.toarray()
+            cfg = self.config
+            if self.data_name == 'vcc' and cfg is not None and cfg.mask_subsample and self.adata_train.n_obs > cfg.mask_subsample:
+                rng = np.random.default_rng(42)
+                sub_idx = rng.choice(self.adata_train.n_obs, cfg.mask_subsample, replace=False)
+                X = self.adata_train.X[sub_idx].toarray()
+                print(f'##### vcc: mask built from {cfg.mask_subsample} subsampled train cells #####')
+            else:
+                X = self.adata_train.X.toarray()
             mask = build_gene_coexpression_graph(X,
                 method="pearson",
                 wgcna_beta=None,
@@ -250,7 +318,7 @@ class Data:
             test_sampler = TestDataset(self.data_name, self.adata_test, ["Drug1", "Drug2"], self.perturbation_dict)
             
             return train_sampler , test_sampler, []
-        elif self.data_name == 'norman' or self.data_name == 'norman_umi_go_filtered':
+        elif self.data_name == 'norman' or self.data_name == 'norman_umi_go_filtered' or self.data_name == 'vcc':
             train_sampler = TrainSampler(self.data_name, self.adata_train, ["Drug1", "Drug2"], self.perturbation_dict)
             test_sampler = TestDataset(self.data_name, self.adata_test, ["Drug1", "Drug2"], self.perturbation_dict)
             return train_sampler , test_sampler, []
@@ -532,57 +600,6 @@ class PretrainData(Dataset):
         }
     
             
-class FlowMatchingDataset(Dataset):
-    """PyTorch Dataset for flow matching training data"""
-    
-    def __init__(self, jax_sampler, num_samples=10000, seed=42):
-        """
-        Args:
-            jax_sampler: JAX-based TrainSampler
-            num_samples: Number of samples to generate per epoch
-            seed: Random seed
-        """
-        self.jax_sampler = jax_sampler
-        self.num_samples = num_samples
-        self.rng = jax.random.PRNGKey(seed)
-        
-    def __len__(self):
-        return self.num_samples
-        
-    def __getitem__(self, idx):
-        """Sample a batch from the JAX sampler"""
-        # Generate new random key for each sample
-        self.rng, sample_key = jax.random.split(self.rng)
-        
-        # Sample from JAX sampler
-        sample = self.jax_sampler.sample(sample_key)
-        
-        # Convert JAX arrays to PyTorch tensors
-        src_cell_data = torch.from_numpy(np.array(sample['src_cell_data'])).float()
-        tgt_cell_data = torch.from_numpy(np.array(sample['tgt_cell_data'])).float()
-        
-        sample['src_cell_id']
-        sample['tgt_cell_id']
-        # Convert condition embedding if available
-        condition_data = None
-        if 'condition' in sample:
-            condition_data = {
-                key: torch.from_numpy(np.array(val)).float()
-                for key, val in sample['condition'].items()
-            }
-        
-        # Convert condition_id embedding if available
-        condition_id = None
-        if 'condition_id' in sample:
-            condition_id = torch.from_numpy(np.array(sample['condition_id'])).long()
-        
-        return {
-            'src_cell_data': src_cell_data,
-            'tgt_cell_data': tgt_cell_data,
-            'condition': condition_data,
-            'condition_id': condition_id,
-        }
-        
 if __name__ == "__main__":
     data = Data(data_path='./data')
     data.load_data(data_name='combosciplex')

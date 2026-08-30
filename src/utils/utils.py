@@ -104,8 +104,10 @@ def process_vocab(data_manager, config):
         vocab = GeneVocab.from_file(vocab_path)
     else:
         print('##### building vocab #####')
-        highly_gene = data_manager.adata.var[data_manager.adata_train.var['highly_variable']]
-        vocab = GeneVocab(list(highly_gene.index), specials=['<pad>', '<cls>', '<mask>', 'control'])
+        # Build from the train gene set directly (train var is already the
+        # HVG+panel subset; filtering by the 'highly_variable' mask drops
+        # forced-in panel genes whose metadata flag is stale).
+        vocab = GeneVocab(list(data_manager.adata_train.var_names), specials=['<pad>', '<cls>', '<mask>', 'control'])
         vocab.save_json(vocab_path)
         vocab = GeneVocab.from_file(vocab_path)
     return vocab
