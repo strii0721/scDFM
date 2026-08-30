@@ -4,4 +4,8 @@ test.md
 *.zip
 result
 data/norman
-additive.sh
+additive.shdata/
+result/
+cell-eval-outdir/
+.venv/
+src/tokenizer/vcc_*_highly_vocab.json
