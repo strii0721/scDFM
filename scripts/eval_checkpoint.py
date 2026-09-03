@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""Evaluate a saved scDFM checkpoint on the holdout cell line (single GPU).
+
+Reuses run.py's test() with its globals set. Usage:
+  python scripts/eval_checkpoint.py --checkpoint_path <checkpoint.pt> \
+      [same vcc data args as training] --max_test_perts 20 --out_dir <dir>
+"""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import torch
+import tyro
+from accelerate import Accelerator
+
+import src.script.run as runner
+from config.config_flow import FlowConfig
+from src.data_process.data import Data
+from src.models.instantiate_model import instantiate_model
+from src.utils.utils import process_vocab
+
+
+def main():
+    config = tyro.cli(FlowConfig, description=__doc__)
+    assert config.checkpoint_path and os.path.exists(config.checkpoint_path), "checkpoint_path required"
+
+    accelerator = Accelerator()
+    device = accelerator.device
+    runner.config = config
+    runner.device = device
+
+    # data (same pipeline as training)
+    data_manager = Data(config.data_path, config=config)
+    data_manager.load_data(config.data_name)
+    data_manager.process_data(
+        n_top_genes=config.n_top_genes, infer_top_gene=config.infer_top_gene,
+        split_method=config.split_method, fold=config.fold,
+        use_negative_edge=config.use_negative_edge, k=config.topk,
+    )
+    _, valid_sampler, _ = data_manager.load_flow_data(batch_size=config.batch_size)
+
+    # model + checkpoint (weights only)
+    mask_path = os.path.join(
+        data_manager.data_path, data_manager.data_name,
+        'mask_fold_' + str(config.fold) + 'topk_' + str(config.topk) + config.split_method + '.pt',
+    )
+    vf = instantiate_model(
+        config.model_type, ntoken=config.ntoken, d_model=config.d_model,
+        d_perturbation=config.d_model, fusion_method=config.fusion_method,
+        perturbation_function=config.perturbation_function, mask_path=mask_path,
+    )
+    ckpt = torch.load(config.checkpoint_path, map_location='cpu')
+    vf.load_state_dict(ckpt['model_state_dict'])
+    vf = vf.to(device)
+
+    vocab = process_vocab(data_manager, config)
+    # globals referenced by run.py's test()
+    runner.inverse_dict = {v: str(k) for k, v in data_manager.perturbation_dict.items()}
+
+    out_dir = config.result_path
+    os.makedirs(out_dir, exist_ok=True)
+    score = runner.test(valid_sampler, vf, accelerator, batch_size=config.batch_size,
+                        path=out_dir, vocab=vocab)
+    print(f"eval done, score={score}")
+
+
+if __name__ == "__main__":
+    main()

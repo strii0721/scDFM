@@ -103,15 +103,17 @@ def train_step(source, target, perturbation_id, vf, criterion, accelerator, nois
                 per_cell_L=getattr(config, "poisson_target_sum", 1e4),  # e.g., 1e4 or None
             )
         path_x1 = path.sample(t=t, x_0=target_noise, x_1=target)
-        predicted_x_t_velocity = vf(gene_input,path_x1.x_t, path_x1.t,source,perturbation_id, gene_input, mode=mode)
+        with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=getattr(config, 'use_bf16', False)):
+            predicted_x_t_velocity = vf(gene_input,path_x1.x_t, path_x1.t,source,perturbation_id, gene_input, mode=mode)
         loss = ((predicted_x_t_velocity - path_x1.dx_t)**2).mean()
         
         if config.use_mmd_loss:
             x1_hat = path_x1.x_t + predicted_x_t_velocity*(1-t).unsqueeze(-1)
-            sigmas = median_sigmas(target, scales=(0.5,1.0,2.0,4.0))
-            
-            _mmd_loss = mmd2_unbiased_multi_sigma(x1_hat, target, sigmas)
-            # _mmd_loss = mmd_loss(x1_hat, target)
+            # fp32 for stable pairwise-distance kernels under bf16 training
+            x1_hat_f = x1_hat.float()
+            target_f = target.float()
+            sigmas = median_sigmas(target_f, scales=(0.5,1.0,2.0,4.0))
+            _mmd_loss = mmd2_unbiased_multi_sigma(x1_hat_f, target_f, sigmas)
             loss = loss + _mmd_loss * config.gamma
 
     elif mode=="predict_p":
@@ -260,7 +262,7 @@ if __name__ == "__main__":
     train_sampler, valid_sampler, test_dl = data_manager.load_flow_data(batch_size=config.batch_size)
     
     train_dataset = PerturbationDataset(train_sampler, config.batch_size)
-    dataloader = DataLoader(train_dataset, batch_size=1, shuffle=False,num_workers=8,pin_memory=True,persistent_workers=True)  # batch_size=1 因为每个getitem本身就是一个batch
+    dataloader = DataLoader(train_dataset, batch_size=1, shuffle=False,num_workers=config.num_workers,pin_memory=True,persistent_workers=True)  # batch_size=1 因为每个getitem本身就是一个batch
     if config.use_negative_edge:
         mask_path = os.path.join(data_manager.data_path, data_manager.data_name,'mask_fold_'+str(config.fold)+'topk_'+str(config.topk)+config.split_method+'_negative_edge'+'.pt')
     else:
@@ -318,11 +320,14 @@ if __name__ == "__main__":
 
             
             if iteration % config.print_every == 0:
+                # lockstep: all ranks wait here so main-process checkpoint save
+                # does not let other ranks race ahead and exit
+                accelerator.wait_for_everyone()
                 save_path_ = os.path.join(save_path, f'iteration_{iteration}')
                 os.makedirs(save_path_, exist_ok=True)
+                eval_score = None
                 if accelerator.is_main_process:
                     print(f"svaing {iteration}'s checkpoint...")
-                    
                     save_checkpoint(
                         model=accelerator.unwrap_model(vf), 
                         optimizer=optimizer, 
@@ -332,7 +337,13 @@ if __name__ == "__main__":
                         save_path=save_path_, 
                         is_best=False
                     )
-                eval_score = test(valid_sampler, vf, accelerator, batch_size=config.batch_size, path=save_path_,vocab=vocab)
+                if config.do_eval:
+                    # NOTE: in-loop eval deadlocks under multi-GPU DDP (other ranks'
+                    # first backward all_reduce waits for the main rank while it
+                    # evaluates). Only safe for single-GPU runs; DDP training must
+                    # use --no-do_eval and evaluate from checkpoints afterwards.
+                    if accelerator.is_main_process:
+                        eval_score = test(valid_sampler, vf, accelerator, batch_size=config.batch_size, path=save_path_,vocab=vocab)
                 
             accelerator.wait_for_everyone()
             
@@ -342,4 +353,22 @@ if __name__ == "__main__":
             if iteration >= config.steps:
                 break
             
+    # save final checkpoint if the loop ended without saving this iteration
+    # (covers both between-marks endings and exact-multiple endings like
+    #  steps=5000, print_every=1000 -> iteration_5000)
+    final_dir = os.path.join(save_path, f'iteration_{iteration}')
+    if not os.path.exists(os.path.join(final_dir, 'checkpoint.pt')):
+        accelerator.wait_for_everyone()
+        if accelerator.is_main_process:
+            os.makedirs(final_dir, exist_ok=True)
+            print(f"svaing final {iteration}'s checkpoint...")
+            save_checkpoint(
+                model=accelerator.unwrap_model(vf),
+                optimizer=optimizer,
+                scheduler=scheduler,
+                iteration=iteration,
+                eval_score=None,
+                save_path=final_dir,
+                is_best=False,
+            )
             

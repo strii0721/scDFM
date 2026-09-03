@@ -5,14 +5,14 @@ set -euo pipefail
 cd "$HOME/Projects/scDFM"
 export PYTHONPATH=.
 
-DATA_ROOT=/ssd1/ict2/chen/scdfm_demo_v1
-mkdir -p "$DATA_ROOT/data" "$DATA_ROOT/results"
+OUTPUT_ROOT="$HOME/Projects/scDFM/output"
+mkdir -p "$OUTPUT_ROOT/data" "$OUTPUT_ROOT/results"
 
 exec ~/.local/bin/uv run python src/script/run.py \
   --data_name=vcc \
-  --data_path="$DATA_ROOT/data" \
+  --data_path="$OUTPUT_ROOT/data" \
   --corpus_path=/ssd1/PubData/vcc_val1_pretrain.aligned18533.ctrl400.min20.v2.h5ad \
-  --panel_path=/ssd1/ict2/chen/vcc_panel_genes.csv \
+  --panel_path="/home/ict2/Projects/vcc-2026/resources/PubData/vcc2026-val-1/pert_counts.csv" \
   --holdout_line="${HOLDOUT_LINE:-K562}" \
   --line_col=cell_line \
   --crispr_type_col=crispr_type \
@@ -27,5 +27,5 @@ exec ~/.local/bin/uv run python src/script/run.py \
   --split_method=leave_line_out \
   --topk=30 \
   --noise_type=Gaussian \
-  --result_path="$DATA_ROOT/results" \
+  --result_path="$OUTPUT_ROOT/results" \
   "$@"

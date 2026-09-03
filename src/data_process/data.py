@@ -244,33 +244,48 @@ class Data:
                 sc.pp.normalize_total(self.adata, target_sum=1e4)
                 sc.pp.log1p(self.adata)
                 # 4) HVG + force panel genes
-                panel = pd.read_csv(cfg.panel_path, header=None)[0].astype(str).tolist()
+                panel_raw = pd.read_csv(cfg.panel_path, header=None)[0].astype(str).tolist()
+                # official pert_counts.csv has a 'target_gene' title row; separate junk rows
+                # from genuinely missing panel genes using var_names + corpus perturbations
+                known_genes = set(self.adata.var_names) | set(self.adata.obs['target_gene'].astype(str).unique())
+                panel = [g for g in panel_raw if g in self.adata.var_names]
+                junk = [g for g in panel_raw if g not in known_genes]
+                missing = [g for g in panel_raw if g in known_genes and g not in self.adata.var_names]
+                if junk:
+                    print(f'##### vcc: dropping {len(junk)} non-gene panel rows: {junk} #####')
+                if missing:
+                    print(f'##### vcc: {len(missing)} panel genes not in var_names: {missing} #####')
                 sc.pp.highly_variable_genes(self.adata, n_top_genes=n_top_genes)
                 hv = self.adata.var['highly_variable'].copy()
-                missing = [g for g in panel if g not in self.adata.var_names]
-                if missing:
-                    print(f'##### vcc: {len(missing)} panel genes not in var_names #####')
                 for g in panel:
-                    if g in self.adata.var_names:
-                        hv.loc[g] = True
+                    hv.loc[g] = True
                 self.adata.var['highly_variable'] = hv.to_numpy()
                 self.adata = self.adata[:, hv.to_numpy()].copy()
                 self.adata.write(cache)
                 print(f'##### vcc: processed cached to {cache} #####')
-            # 5) leave-one-line-out split
-            assert cfg.holdout_line, 'vcc mode requires --holdout_line'
-            lines = self.adata.obs[cfg.line_col].astype(str)
-            assert cfg.holdout_line in set(lines), f'holdout line {cfg.holdout_line} not in corpus'
-            self.adata.obs['mode'] = np.where(lines == cfg.holdout_line, 'test', 'train')
-            self.adata.obs['Drug1'] = self.adata.obs['condition'].str.split('+').str[0]
-            self.adata.obs['Drug2'] = self.adata.obs['condition'].str.split('+').str[-1]
-            self.adata_train = self.adata[self.adata.obs['mode'] == 'train']
-            self.adata_test = self.adata[self.adata.obs['mode'] == 'test']
-            n_ctl_test = int(self.adata_test.obs['is_control'].sum())
-            assert n_ctl_test > 0, f'holdout line {cfg.holdout_line} has no control cells'
-            print(f'##### vcc: train {self.adata_train.n_obs} cells / test({cfg.holdout_line}) {self.adata_test.n_obs} cells ({n_ctl_test} ctl) #####')
-            sc.pp.highly_variable_genes(self.adata_test, inplace=True, n_top_genes=infer_top_gene)
-            self.adata_test = self.adata_test[:, self.adata_test.var['highly_variable']]
+            # 5) split: leave-one-line-out (holdout_line='none' -> train on ALL cells)
+            if cfg.holdout_line and str(cfg.holdout_line).lower() != 'none':
+                lines = self.adata.obs[cfg.line_col].astype(str)
+                assert cfg.holdout_line in set(lines), f'holdout line {cfg.holdout_line} not in corpus'
+                self.adata.obs['mode'] = np.where(lines == cfg.holdout_line, 'test', 'train')
+                self.adata.obs['Drug1'] = self.adata.obs['condition'].str.split('+').str[0]
+                self.adata.obs['Drug2'] = self.adata.obs['condition'].str.split('+').str[-1]
+                self.adata_train = self.adata[self.adata.obs['mode'] == 'train']
+                self.adata_test = self.adata[self.adata.obs['mode'] == 'test']
+                n_ctl_test = int(self.adata_test.obs['is_control'].sum())
+                assert n_ctl_test > 0, f'holdout line {cfg.holdout_line} has no control cells'
+                print(f'##### vcc: train {self.adata_train.n_obs} cells / test({cfg.holdout_line}) {self.adata_test.n_obs} cells ({n_ctl_test} ctl) #####')
+                sc.pp.highly_variable_genes(self.adata_test, inplace=True, n_top_genes=infer_top_gene)
+                self.adata_test = self.adata_test[:, self.adata_test.var['highly_variable']]
+            else:
+                self.adata.obs['mode'] = 'train'
+                self.adata.obs['Drug1'] = self.adata.obs['condition'].str.split('+').str[0]
+                self.adata.obs['Drug2'] = self.adata.obs['condition'].str.split('+').str[-1]
+                self.adata_train = self.adata
+                # non-empty view as placeholder test set (test() never runs with
+                # --no-do_eval; empty frames break TestDataset's obs apply)
+                self.adata_test = self.adata
+                print(f'##### vcc: NO holdout - train on ALL {self.adata_train.n_obs} cells #####')
             condition = np.unique(list(self.adata.obs['condition']))
             unique_perturbation = []
             np.array([unique_perturbation.extend(perturbation.split('+')) for perturbation in condition])

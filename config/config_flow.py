@@ -48,6 +48,9 @@ class FlowConfig:
     mask_subsample: int = 50000  # cells for co-expression graph (0 = all)
     cells_per_target: int = 400
     max_test_perts: int = 20  # cap on perturbations evaluated per checkpoint (0 = all)
+    num_workers: int = 8  # DataLoader workers per rank
+    use_bf16: bool = False  # bf16 autocast for forward/backward
+    do_eval: bool = True  # in-loop eval; MUST be False under multi-GPU DDP (deadlocks NCCL)
     
     def __post_init__(self):
         if self.data_name == 'norman_umi_go_filtered':

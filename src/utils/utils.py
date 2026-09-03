@@ -98,7 +98,9 @@ def load_checkpoint(checkpoint_path, model, optimizer, scheduler):
     
     
 def process_vocab(data_manager, config):
-    vocab_path = os.path.join('src/tokenizer',config.data_name+'_'+str(config.n_top_genes)+'_highly_vocab.json')
+    # absolute path (robust to any cwd, e.g. dated run dirs on the remote)
+    src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    vocab_path = os.path.join(src_dir, 'tokenizer', config.data_name + '_' + str(config.n_top_genes) + '_highly_vocab.json')
     if os.path.exists(vocab_path):
         print('##### loading vocab from file #####')
         vocab = GeneVocab.from_file(vocab_path)
