@@ -11,8 +11,8 @@ mkdir -p "$OUTPUT_ROOT/data" "$OUTPUT_ROOT/results"
 exec ~/.local/bin/uv run python src/script/run.py \
   --data_name=vcc \
   --data_path="$OUTPUT_ROOT/data" \
-  --corpus_path=/ssd1/PubData/vcc_val1_pretrain.aligned18533.ctrl400.min20.v2.h5ad \
-  --panel_path="/home/ict2/Projects/vcc-2026/resources/PubData/vcc2026-val-1/pert_counts.csv" \
+  --corpus_path=/home/ict2/Projects/vcc-2026/resources/data/vcc_val1_pretrain.aligned18533.ctrl400.min20.v2.h5ad \
+  --panel_path="/home/ict2/Projects/vcc-2026/resources/data/vcc2026-val-1/pert_counts.csv" \
   --holdout_line="${HOLDOUT_LINE:-K562}" \
   --line_col=cell_line \
   --crispr_type_col=crispr_type \

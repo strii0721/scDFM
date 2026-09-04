@@ -7,7 +7,7 @@ import pandas as pd
 import anndata as ad
 
 path = sys.argv[1]
-controls_dir = sys.argv[2] if len(sys.argv) > 2 else '/ssd1/PubData/vcc2026-val-1'
+controls_dir = sys.argv[2] if len(sys.argv) > 2 else '/home/ict2/Projects/vcc-2026/resources/data/vcc2026-val-1'
 
 a = ad.read_h5ad(path)
 X = a.X.tocsr()
