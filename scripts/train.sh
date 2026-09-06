@@ -3,8 +3,8 @@
 #   source .venv/bin/activate
 #
 # 用法:
-#   bash scripts/train.sh              # 单卡
-#   GPUS=8 bash scripts/train.sh       # 多卡 DDP（torchrun）
+#   bash scripts/train.sh              # 默认 8 卡 DDP（torchrun）
+#   GPUS=1 bash scripts/train.sh       # 单卡
 #   STEPS=200 bash scripts/train.sh    # 覆盖步数
 # 训练超参/数据路径全部走 config/config_flow.py 默认值（VCC 主线已收口），
 # 这里只传运行态参数；其他覆盖直接追加 tyro 参数:
@@ -17,7 +17,7 @@ ARGS=(--data_name=vcc)
 [ -n "${STEPS:-}" ] && ARGS+=(--steps="$STEPS")
 [ -n "${PRINT_EVERY:-}" ] && ARGS+=(--print_every="$PRINT_EVERY")
 
-if [ "${GPUS:-1}" -gt 1 ]; then
+if [ "${GPUS:-8}" -gt 1 ]; then
   # DDP：循环内 eval 会 NCCL 死锁，config 默认 do_eval=False，这里再显式关一次
   torchrun --nproc_per_node="$GPUS" src/script/run.py "${ARGS[@]}" --no-do_eval "$@"
 else
