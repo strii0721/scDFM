@@ -10,7 +10,7 @@
 set -euo pipefail
 
 PY=".venv/bin/python"
-GEN="scripts/generate_submission.py"
+GEN="src/script/generate_submission.py"
 OUT_ROOT="output/inference"
 PARTIALS="$OUT_ROOT/partials"
 

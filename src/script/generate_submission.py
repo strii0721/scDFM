@@ -17,7 +17,7 @@ Pipeline per (context, perturbation):
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import hashlib
 import h5py
@@ -80,7 +80,7 @@ def main():
 
     # 1) vocab + modeled gene set (top-HVG by dispersions_norm + panel forced)
     vocab = GeneVocab.from_file(
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                      'src', 'tokenizer', f'vcc_{config.n_top_genes}_highly_vocab.json'))
     cache = os.path.join(config.data_path, config.data_name, f'processed_n{config.n_top_genes}.h5ad')
     with h5py.File(cache, 'r') as f:

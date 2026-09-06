@@ -16,7 +16,7 @@ for cp in ${CHECKPOINTS:-0 2000 4000}; do
   out="$RUN_DIR/eval_ckpt_$cp"
   mkdir -p "$out"
   echo "launching eval of checkpoint $cp on gpu $gpu"
-  nohup env CUDA_VISIBLE_DEVICES=$gpu "$PROJ/.venv/bin/python" "$PROJ/scripts/eval_checkpoint.py" \
+  nohup env CUDA_VISIBLE_DEVICES=$gpu "$PROJ/.venv/bin/python" "$PROJ/src/script/eval_checkpoint.py" \
     --checkpoint_path "$EXP_DIR/iteration_$cp/checkpoint.pt" \
     --result_path "$out" \
     $COMMON > "$RUN_DIR/eval_ckpt_$cp.log" 2>&1 &

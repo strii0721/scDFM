@@ -2,13 +2,13 @@
 """Evaluate a saved scDFM checkpoint on the holdout cell line (single GPU).
 
 Reuses run.py's test() with its globals set. Usage:
-  python scripts/eval_checkpoint.py --checkpoint_path <checkpoint.pt> \
+  python src/script/eval_checkpoint.py --checkpoint_path <checkpoint.pt> \
       [same vcc data args as training] --max_test_perts 20 --out_dir <dir>
 """
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import torch
 import tyro
