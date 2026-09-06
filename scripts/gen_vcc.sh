@@ -9,7 +9,7 @@
 # 注意: prep 内存需求 ~31GB（远程 1TB RAM 无压力）；产物 .vcc 约 2.7GB
 set -euo pipefail
 
-CONTROLS_DIR="${CONTROLS_DIR:-/ssd1/ict2/Projects/vcc-2026/resources/datasets/vcc2026-val-1}"
+CONTROLS_DIR="${CONTROLS_DIR:-/ssd1/ict2/Projects/vcc-2026/resources/datasets/controls}"
 IN_H5AD="${IN_H5AD:-output/inference/prediction.h5ad}"
 OUT_VCC="${OUT_VCC:-output/inference/prediction.vcc}"
 

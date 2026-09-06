@@ -7,7 +7,8 @@
 #
 # 排除规则: 显式排除（仓库约定大目录）+ .gitignore 逐目录规则。
 #   - .gitignore: 构建产物/缓存/__pycache__/venv/assets 等（rsync 逐目录合并）
-#   - data/result/output/.git/.venv: 仓库约定 —— 语料在远程 /ssd1/PubData；
+#   - data/result/output/.git/.venv: 仓库约定 —— 语料在远程
+#     /ssd1/ict2/Projects/vcc-2026/resources/datasets（combine/ 语料 + controls/ 官方对照）；
 #     训练产物在远程本地盘生成，一律不随代码同步。
 # 远程目标: ict2@123.184.7.203:/ssd1/ict2/Projects/scDFM/
 set -euo pipefail

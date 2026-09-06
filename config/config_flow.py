@@ -4,9 +4,9 @@ import os
 
 VCC_REMOTE_RESOURCE_ROOT = '/ssd1/ict2/Projects/vcc-2026/resources/datasets'
 VCC_REMOTE_CORPUS_PATH = os.path.join(
-    VCC_REMOTE_RESOURCE_ROOT, 'vcc_val1_pretrain.aligned18533.ctrl400.min20.v2.h5ad'
+    VCC_REMOTE_RESOURCE_ROOT, 'combine', 'vcc_val1_pretrain.aligned18533.ctrl400.min20.v2.h5ad'
 )
-VCC_REMOTE_CONTROLS_DIR = os.path.join(VCC_REMOTE_RESOURCE_ROOT, 'vcc2026-val-1')
+VCC_REMOTE_CONTROLS_DIR = os.path.join(VCC_REMOTE_RESOURCE_ROOT, 'controls')
 VCC_REMOTE_PANEL_PATH = os.path.join(VCC_REMOTE_CONTROLS_DIR, 'pert_counts.csv')
 
 @dataclass
