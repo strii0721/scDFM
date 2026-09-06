@@ -29,8 +29,9 @@ Framework of paper:
 <a href="url"><img src="assets/fig1.png" align="center" width="600" ></a>
 
 ## Install dependencies 
+Python env is managed by **uv** — manifest `pyproject.toml`, lock `uv.lock` (edit deps in pyproject, then `uv lock`):
 ```
-conda env create -f environment.yml
+uv sync          # then `uv run ...` or `source .venv/bin/activate`
 ```
 
 ##  ⏬ Dataset download

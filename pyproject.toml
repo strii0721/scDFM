@@ -24,6 +24,9 @@ dependencies = [
     "requests",
     "beautifulsoup4",
     "tqdm",
+    # jax: sampler RNG in src/data_process (_data/_dataloader/_datamanager); not transitive — pin explicitly
+    "jax==0.6.2",
+    "jaxlib==0.6.2",
 ]
 
 [build-system]
