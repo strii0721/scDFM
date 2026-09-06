@@ -1,24 +1,25 @@
-export PYTHONPATH=./
+#!/usr/bin/env bash
+# VCC-2026 scDFM 训练。远程服务器【项目根目录】执行，先激活 uv 虚拟环境：
+#   source .venv/bin/activate
+#
+# 用法:
+#   bash scripts/train.sh              # 单卡
+#   GPUS=8 bash scripts/train.sh       # 多卡 DDP（torchrun）
+#   STEPS=200 bash scripts/train.sh    # 覆盖步数
+# 训练超参/数据路径全部走 config/config_flow.py 默认值（VCC 主线已收口），
+# 这里只传运行态参数；其他覆盖直接追加 tyro 参数:
+#   bash scripts/train.sh --gamma=1.0 --max_test_perts=0
+# 产物: output/train/flow-fusion-.../iteration_N/checkpoint.pt（见 config.make_path）
+set -euo pipefail
+export PYTHONPATH=.
 
-python  src/script/run.py  \
---batch_size=48 \
---devices='0' \
---model_type=origin \
---lr=5e-5 \
---steps=200000 \
---data_name=norman \
---d_model=128 \
---eta_min=1e-6 \
---fusion_method=differential_perceiver \
---infer_top_gene=1000 \
---n_top_genes=5000 \
---result_path=./result/additive \
---perturbation_function=crisper \
---noise_type=Gaussian \
---mode=predict_y \
---gamma=0.5 \
---split_method=additive \
---use_mmd_loss \
---fold=1 \
---topk=30 \
---use_negative_edge \
+ARGS=(--data_name=vcc)
+[ -n "${STEPS:-}" ] && ARGS+=(--steps="$STEPS")
+[ -n "${PRINT_EVERY:-}" ] && ARGS+=(--print_every="$PRINT_EVERY")
+
+if [ "${GPUS:-1}" -gt 1 ]; then
+  # DDP：循环内 eval 会 NCCL 死锁，config 默认 do_eval=False，这里再显式关一次
+  torchrun --nproc_per_node="$GPUS" src/script/run.py "${ARGS[@]}" --no-do_eval "$@"
+else
+  python src/script/run.py "${ARGS[@]}" "$@"
+fi
