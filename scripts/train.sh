@@ -13,11 +13,13 @@
 set -euo pipefail
 export PYTHONPATH=.
 
+GPUS="${GPUS:-8}"
+
 ARGS=(--data_name=vcc)
 [ -n "${STEPS:-}" ] && ARGS+=(--steps="$STEPS")
 [ -n "${PRINT_EVERY:-}" ] && ARGS+=(--print_every="$PRINT_EVERY")
 
-if [ "${GPUS:-8}" -gt 1 ]; then
+if [ "$GPUS" -gt 1 ]; then
   # DDP：循环内 eval 会 NCCL 死锁，config 默认 do_eval=False，这里再显式关一次
   torchrun --nproc_per_node="$GPUS" src/script/run.py "${ARGS[@]}" --no-do_eval "$@"
 else
