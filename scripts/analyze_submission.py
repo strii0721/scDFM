@@ -5,9 +5,10 @@ import numpy as np
 import pandas as pd
 
 import anndata as ad
+from config.config_flow import VCC_REMOTE_CONTROLS_DIR
 
 path = sys.argv[1]
-controls_dir = sys.argv[2] if len(sys.argv) > 2 else '/home/ict2/Projects/vcc-2026/resources/data/vcc2026-val-1'
+controls_dir = sys.argv[2] if len(sys.argv) > 2 else VCC_REMOTE_CONTROLS_DIR
 
 a = ad.read_h5ad(path)
 X = a.X.tocsr()

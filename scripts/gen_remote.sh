@@ -14,12 +14,8 @@ echo "exp dir: $EXP_DIR"
 echo "gen dir: $GEN_DIR"
 
 COMMON="--data_name=vcc \
-  --data_path=$OUTPUT_ROOT/data \
-  --panel_path=/home/ict2/Projects/vcc-2026/resources/data/vcc2026-val-1/pert_counts.csv \
-  --controls_dir=/home/ict2/Projects/vcc-2026/resources/data/vcc2026-val-1 \
-  --n_top_genes=5000 --infer_top_gene=1000 --top_infer_genes=1000 \
-  --batch_size=128 --ode_steps=${ODE_STEPS:-12} --split_method=leave_line_out --topk=30 \
-  --noise_type=Gaussian --checkpoint_path $EXP_DIR/iteration_$ITER/checkpoint.pt"
+  --batch_size=128 --ode_steps=${ODE_STEPS:-12} \
+  --checkpoint_path $EXP_DIR/iteration_$ITER/checkpoint.pt"
 
 EXTRA=""
 [ -n "${MAX_PAIRS:-}" ] && EXTRA="--max_pairs $MAX_PAIRS"

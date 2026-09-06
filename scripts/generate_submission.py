@@ -29,7 +29,7 @@ import torchdiffeq
 from scipy import sparse
 from dataclasses import dataclass
 
-from config.config_flow import FlowConfig
+from config.config_flow import FlowConfig, VCC_REMOTE_CONTROLS_DIR
 from src.models.instantiate_model import instantiate_model
 from src.tokenizer.gene_tokenizer import GeneVocab
 
@@ -39,7 +39,7 @@ ODEDEF_STEPS = 20
 
 @dataclass
 class GenConfig(FlowConfig):
-    controls_dir: str = ''      # dir with context_{A,B,C}.h5ad + gene_names.csv
+    controls_dir: str = VCC_REMOTE_CONTROLS_DIR  # dir with context_{A,B,C}.h5ad + gene_names.csv
     mask_fname: str = MASK_FNAME_DEFAULT  # co-expression mask (must match training run)
     out_dir: str = ''           # partial h5ad output dir
     shard_id: int = 0
