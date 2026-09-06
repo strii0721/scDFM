@@ -4,8 +4,8 @@
 Loads a trained scDFM checkpoint, flow-generates perturbed cells for the
 official A/B/C controls, converts to raw integer counts, and writes partial
 h5ad slices. Sharded across GPUs via SHARD_ID / NUM_SHARDS env vars (each
-shard takes interleaved (context, pert) pairs). Merge afterwards with
-scripts/merge_submission.py.
+shard takes interleaved (context, pert) pairs). Orchestrated + merged by
+scripts/inference.sh.
 
 Pipeline per (context, perturbation):
   source = 400 control cells (fixed seed)
