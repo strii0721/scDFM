@@ -60,7 +60,7 @@ scDFM/
 │  └─ combosciplex.h5ad
 ├─ src/
 │  └─ ...
-└─ run.sh
+└─ train.sh
 ```
 
 
@@ -69,7 +69,7 @@ scDFM/
 
 An example on additive task.
 ```bash
-bash run.sh
+bash train.sh
 ```
 
 ## 🫡 Citation
