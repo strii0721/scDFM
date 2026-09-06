@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 import os
 
-VCC_REMOTE_RESOURCE_ROOT = '/home/ict2/Projects/vcc-2026/resources/data'
+VCC_REMOTE_RESOURCE_ROOT = '/ssd1/ict2/Projects/vcc-2026/resources/datasets'
 VCC_REMOTE_CORPUS_PATH = os.path.join(
     VCC_REMOTE_RESOURCE_ROOT, 'vcc_val1_pretrain.aligned18533.ctrl400.min20.v2.h5ad'
 )
@@ -32,7 +32,7 @@ class FlowConfig:
 
     print_every: int = 1000
     mode: str = 'predict_y' # predict_y, predict_p
-    result_path: str = './result'
+    result_path: str = 'output/train'
     perturbation_fusion_method: str = 'sum' # mlp, sum
     fusion_method: str = 'differential_perceiver' # cross , concat, add
     infer_top_gene: int = 1000
