@@ -224,3 +224,7 @@ assets/
 # scDFM 训练/输出产物
 output/
 result/
+
+# 训练时生成的 vcc vocab（远程首跑 process_vocab 产物，本地不存在；
+# 若不加规则，sync.sh --delete 会误删远程文件）
+src/tokenizer/vcc_*_highly_vocab.json

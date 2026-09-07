@@ -3,10 +3,14 @@
 # 与 train.sh 一致：在远程服务器【项目根目录】执行，全程相对路径。
 #
 # 用法:
-#   bash scripts/inference.sh [checkpoint.pt]   # 缺省自动取 output/train 下最新 checkpoint.pt
-# 环境变量: NUM_SHARDS(默认8) MAX_PAIRS(冒烟,只生成每分片N对) ODE_STEPS MASK_FNAME
+#   bash scripts/inference.sh [checkpoint.pt]   # 缺省自动取 output/train 下最新 checkpoint.pt（按 mtime）
+# 环境变量:
+#   NUM_SHARDS(默认8) MAX_PAIRS(冒烟,只生成每分片N对) ODE_STEPS(默认12)
+#   MASK_FNAME(可选覆盖; 缺省按 ckpt 所在空间的 config 派生)
+#   DATA_SPACE(可选覆盖; 缺省从 ckpt 路径的 space_* 段自动识别, 无段=log1p)
+#   ANALYZE=1(合并后自动跑 analyze_submission.py 质检)
 # 产物: output/inference/partials/*.h5ad → output/inference/prediction.h5ad
-# 打包: vcc prep output/inference/prediction.h5ad -g <gene_names.csv> --perts <pert_counts.csv> -o prediction.vcc
+# 打包: bash scripts/gen_vcc.sh（内部调 vcc prep）
 set -euo pipefail
 
 PY=".venv/bin/python"
@@ -16,17 +20,31 @@ PARTIALS="$OUT_ROOT/partials"
 
 CKPT="${1:-}"
 if [ -z "$CKPT" ]; then
-  CKPT=$(find output/train -name checkpoint.pt 2>/dev/null | sort | tail -1)
+  # mtime 排序（iteration_N 目录字典序会选错: iteration_9 > iteration_10）
+  CKPT=$(find output/train -name checkpoint.pt -printf '%T@ %p\n' 2>/dev/null \
+    | sort -n | tail -1 | cut -d' ' -f2-)
   [ -n "$CKPT" ] || { echo "no checkpoint under output/train; pass one explicitly" >&2; exit 1; }
 fi
 [ -f "$CKPT" ] || { echo "checkpoint not found: $CKPT" >&2; exit 1; }
 echo "checkpoint: $CKPT"
 
+# space 必须与 ckpt 的训练空间一致（决定缓存/共表达 mask 派生名）
+if [ -z "${DATA_SPACE:-}" ]; then
+  case "$CKPT" in
+    *space_counts*) DATA_SPACE=counts ;;
+    *space_log1p*)  DATA_SPACE=log1p ;;
+    *) DATA_SPACE=log1p ;;  # 旧目录名无 space 段
+  esac
+fi
+echo "data_space: $DATA_SPACE"
+
 mkdir -p "$PARTIALS"
 rm -f "$PARTIALS"/partial_s*.h5ad
 
-COMMON="--data_name=vcc --batch_size=128 --ode_steps=${ODE_STEPS:-12} \
-  --checkpoint_path $CKPT --mask_fname=${MASK_FNAME:-mask_fold_0topk_30leave_line_out.pt}"
+COMMON="--data_name=vcc --data_space=$DATA_SPACE --batch_size=128 --ode_steps=${ODE_STEPS:-12} \
+  --checkpoint_path $CKPT"
+# mask 缺省留空 → generate_submission 按 config.coexpr_mask_fname 派生空间对应名
+[ -n "${MASK_FNAME:-}" ] && COMMON="$COMMON --mask_fname=$MASK_FNAME"
 EXTRA=""
 [ -n "${MAX_PAIRS:-}" ] && EXTRA="--max_pairs $MAX_PAIRS"
 
@@ -63,3 +81,8 @@ print(f'wrote {out_path}: {merged.shape[0]} x {merged.shape[1]}, {X.nnz} nnz '
 print('per (context, target) cells:')
 print(merged.obs.groupby(['context', 'target_gene']).size().groupby('context').agg(['min', 'max']))
 PYEOF
+
+# ---- 可选质检：KD ratio / 深度 / 扰动区分度（counts 桥实验推荐开启）----
+if [ "${ANALYZE:-0}" = "1" ]; then
+  "$PY" src/script/analyze_submission.py "$OUT_ROOT/prediction.h5ad"
+fi
