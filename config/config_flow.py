@@ -96,3 +96,14 @@ class FlowConfig:
         """Per-space processed cache name (data/vcc/<name>.h5ad)."""
         suffix = '_counts' if getattr(self, 'data_space', 'log1p') == 'counts' else ''
         return f'processed_n{self.n_top_genes}{suffix}.h5ad'
+
+    @property
+    def coexpr_mask_fname(self) -> str:
+        """Per-space co-expression mask name (data/vcc/<name>.pt).
+
+        The graph is built from the space's own processed data (pearson on counts
+        vs log1p differs), so counts and log1p runs must not share a mask file.
+        """
+        neg = '_negative_edge' if getattr(self, 'use_negative_edge', False) else ''
+        suffix = '_counts' if getattr(self, 'data_space', 'log1p') == 'counts' else ''
+        return f'mask_fold_{self.fold}topk_{self.topk}{self.split_method}{neg}{suffix}.pt'

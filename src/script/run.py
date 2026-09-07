@@ -266,7 +266,10 @@ if __name__ == "__main__":
     
     train_dataset = PerturbationDataset(train_sampler, config.batch_size)
     dataloader = DataLoader(train_dataset, batch_size=1, shuffle=False,num_workers=config.num_workers,pin_memory=True,persistent_workers=True)  # batch_size=1 因为每个getitem本身就是一个batch
-    if config.use_negative_edge:
+    if hasattr(config, 'coexpr_mask_fname'):
+        # vcc: per-space mask file (graph built from the space's own data)
+        mask_path = os.path.join(data_manager.data_path, data_manager.data_name, config.coexpr_mask_fname)
+    elif config.use_negative_edge:
         mask_path = os.path.join(data_manager.data_path, data_manager.data_name,'mask_fold_'+str(config.fold)+'topk_'+str(config.topk)+config.split_method+'_negative_edge'+'.pt')
     else:
         mask_path = os.path.join(data_manager.data_path, data_manager.data_name,'mask_fold_'+str(config.fold)+'topk_'+str(config.topk)+config.split_method+'.pt')

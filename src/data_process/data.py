@@ -319,18 +319,21 @@ class Data:
         else:
             raise ValueError(self.data_name + ' is not a valid data name')
         
+        cfg = self.config
         if 'fold' in kwargs.keys():
             fold = kwargs['fold']
         else:
             fold = 0
-        if use_negative_edge:
+        if self.data_name == 'vcc' and cfg is not None and hasattr(cfg, 'coexpr_mask_fname'):
+            # per-space mask file (graph built from the space's own data)
+            mask_path = os.path.join(self.data_path, self.data_name, cfg.coexpr_mask_fname)
+        elif use_negative_edge:
             mask_path = os.path.join(self.data_path, self.data_name,'mask_fold_'+str(fold)+'topk_'+str(k)+split_method+'_negative_edge'+'.pt')
         else:
             mask_path = os.path.join(self.data_path, self.data_name,'mask_fold_'+str(fold)+'topk_'+str(k)+split_method+'.pt')
         if os.path.exists(mask_path):
             self.mask = torch.load(mask_path)
         else:
-            cfg = self.config
             if self.data_name == 'vcc' and cfg is not None and cfg.mask_subsample and self.adata_train.n_obs > cfg.mask_subsample:
                 rng = np.random.default_rng(42)
                 sub_idx = rng.choice(self.adata_train.n_obs, cfg.mask_subsample, replace=False)

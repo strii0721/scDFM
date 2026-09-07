@@ -41,10 +41,7 @@ def main():
     _, valid_sampler, _ = data_manager.load_flow_data(batch_size=config.batch_size)
 
     # model + checkpoint (weights only)
-    mask_path = os.path.join(
-        data_manager.data_path, data_manager.data_name,
-        'mask_fold_' + str(config.fold) + 'topk_' + str(config.topk) + config.split_method + '.pt',
-    )
+    mask_path = os.path.join(data_manager.data_path, data_manager.data_name, config.coexpr_mask_fname)
     vf = instantiate_model(
         config.model_type, ntoken=config.ntoken, d_model=config.d_model,
         d_perturbation=config.d_model, fusion_method=config.fusion_method,
