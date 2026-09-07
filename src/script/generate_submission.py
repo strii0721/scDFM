@@ -9,10 +9,12 @@ scripts/inference.sh.
 
 Pipeline per (context, perturbation):
   source = 400 control cells (fixed seed)
-  pred_log1p = ODE(solve, x0 ~ Gaussian noise, cond = pert gene) on modeled genes
-  full_log1p  = modeled genes <- pred; other genes <- source normalized values
-  lambda = expm1(full_log1p); scale so E[total] = source cell's raw depth
-  counts ~ Poisson(lambda) -> int32, CSR
+  data_space='counts': pred = ODE(solve, x0 ~ Gaussian noise, cond = pert gene) on
+      modeled genes; full = source raw counts with modeled genes overwritten;
+      counts ~ Poisson(clip(pred, 0)) -> int32
+  data_space='log1p':  pred_log1p = ODE(...); full_log1p = modeled <- pred, other <-
+      source normalized values; lambda = expm1(full_log1p); scale so E[total] =
+      source cell's raw depth; counts ~ Poisson(lambda) -> int32, CSR
 """
 import os
 import sys
@@ -82,7 +84,7 @@ def main():
     vocab = GeneVocab.from_file(
         os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                      'src', 'tokenizer', f'vcc_{config.n_top_genes}_highly_vocab.json'))
-    cache = os.path.join(config.data_path, config.data_name, f'processed_n{config.n_top_genes}.h5ad')
+    cache = os.path.join(config.data_path, config.data_name, config.processed_cache_fname)
     with h5py.File(cache, 'r') as f:
         var = f['var']
         # var index: nullable-string-array group (values+mask) or plain dataset
@@ -148,12 +150,16 @@ def main():
             import anndata as ad
             ctl = ad.read_h5ad(adata_path)
             raw = ctl.X.tocsr().astype(np.float32)
-            # normalize on full axis, same convention as training
-            from scanpy.preprocessing import normalize_total
-            norm = raw.copy()
-            totals = np.asarray(norm.sum(axis=1)).ravel()
-            norm = sparse.diags(1e4 / np.maximum(totals, 1.0)) @ norm
-            norm.data = np.log1p(norm.data)
+            if config.data_space == 'counts':
+                # counts space: conditioning source + non-modeled genes use raw counts
+                norm = raw
+            else:
+                # normalize on full axis, same convention as training
+                from scanpy.preprocessing import normalize_total
+                norm = raw.copy()
+                totals = np.asarray(norm.sum(axis=1)).ravel()
+                norm = sparse.diags(1e4 / np.maximum(totals, 1.0)) @ norm
+                norm.data = np.log1p(norm.data)
             main._ctl_cache = (ctx, raw, norm)
         _, raw, norm = main._ctl_cache
 
@@ -185,12 +191,20 @@ def main():
         pred_modeled = torch.cat(preds, dim=0).cpu().numpy()  # (400, L)
 
         # 5) full vector + counts
-        full_log = src_norm.toarray()                      # (400, 18533) copy of control
-        full_log[:, modeled_idx] = pred_modeled            # modeled genes <- model
-        lam = np.expm1(np.clip(full_log, 0, 60))           # CP10k-space
-        scale = depths / np.maximum(lam.sum(axis=1), 1.0)
-        lam = lam * scale[:, None]
-        counts = np.random.default_rng(stable_seed(ctx, pert, config.seed + 7)).poisson(lam)
+        if config.data_space == 'counts':
+            # counts space: modeled genes <- predicted counts, non-modeled genes
+            # keep control raw counts; Poisson noise on top; no expm1, no rescale
+            full = src_norm.toarray()                      # (400, 18533) copy of control counts
+            full[:, modeled_idx] = pred_modeled            # modeled genes <- model
+            lam = np.clip(full, 0.0, None)
+            counts = np.random.default_rng(stable_seed(ctx, pert, config.seed + 7)).poisson(lam)
+        else:
+            full_log = src_norm.toarray()                  # (400, 18533) copy of control
+            full_log[:, modeled_idx] = pred_modeled        # modeled genes <- model
+            lam = np.expm1(np.clip(full_log, 0, 60))       # CP10k-space
+            scale = depths / np.maximum(lam.sum(axis=1), 1.0)
+            lam = lam * scale[:, None]
+            counts = np.random.default_rng(stable_seed(ctx, pert, config.seed + 7)).poisson(lam)
         counts = counts.astype(np.int32)
 
         out_rows.append(sparse.csr_matrix(counts))

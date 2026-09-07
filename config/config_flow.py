@@ -49,6 +49,10 @@ class FlowConfig:
     data_path: str = VCC_REMOTE_RESOURCE_ROOT
     corpus_path: str = VCC_REMOTE_CORPUS_PATH
     panel_path: str = VCC_REMOTE_PANEL_PATH
+    # 'counts' = train/predict raw UMI counts directly (no normalize_total/log1p);
+    # 'log1p'  = legacy log1p(CP10k) space. Cache files are space-suffixed so the
+    # two spaces never share a processed cache.
+    data_space: str = 'counts'
     holdout_line: str = 'K562'  # leave-one-line-out validation line
     line_col: str = 'cell_line'
     crispr_type_col: str = 'crispr_type'
@@ -83,5 +87,12 @@ class FlowConfig:
                             f'fold_{self.fold}',
                             f'use_negative_edge_{self.use_negative_edge}',
                             f'topk_{self.topk}',
+                            f'space_{getattr(self, "data_space", "log1p")}',
                             ])
         return os.path.join(self.result_path, exp_name)
+
+    @property
+    def processed_cache_fname(self) -> str:
+        """Per-space processed cache name (data/vcc/<name>.h5ad)."""
+        suffix = '_counts' if getattr(self, 'data_space', 'log1p') == 'counts' else ''
+        return f'processed_n{self.n_top_genes}{suffix}.h5ad'

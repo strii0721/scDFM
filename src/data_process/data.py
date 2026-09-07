@@ -222,7 +222,8 @@ class Data:
         elif self.data_name == 'vcc':
             cfg = self.config
             assert cfg is not None, 'vcc mode requires Data(config=...)'
-            cache = os.path.join(self.data_path, self.data_name, f'processed_n{n_top_genes}.h5ad')
+            data_space = getattr(cfg, 'data_space', 'log1p')
+            cache = os.path.join(self.data_path, self.data_name, cfg.processed_cache_fname)
             os.makedirs(os.path.dirname(cache), exist_ok=True)
             if os.path.exists(cache):
                 print(f'##### loading cached processed h5ad: {cache} #####')
@@ -238,11 +239,19 @@ class Data:
                 is_ctl = tg == 'non-targeting'
                 self.adata.obs['condition'] = np.where(is_ctl, 'control', tg + '+control')
                 self.adata.obs['is_control'] = is_ctl
-                # 3) normalize+log1p on full axis FIRST (scanpy>=1.11 seurat-flavor
-                #    HVG unconditionally expm1's its input, so it must be log-space;
-                #    matches upstream norman convention: normalized full axis -> subset)
-                sc.pp.normalize_total(self.adata, target_sum=1e4)
-                sc.pp.log1p(self.adata)
+                # 3) space transform. counts space keeps raw UMI counts; log1p space
+                #    normalizes first. Either way HVG selection runs on a log1p(CP10k)
+                #    copy (scanpy>=1.11 seurat-flavor HVG unconditionally expm1's its
+                #    input, so it must be log-space) -> identical gene set / dispersion
+                #    stats in both spaces.
+                if data_space == 'log1p':
+                    sc.pp.normalize_total(self.adata, target_sum=1e4)
+                    sc.pp.log1p(self.adata)
+                    hvg_input = self.adata
+                else:  # 'counts'
+                    hvg_input = self.adata.copy()
+                    sc.pp.normalize_total(hvg_input, target_sum=1e4)
+                    sc.pp.log1p(hvg_input)
                 # 4) HVG + force panel genes
                 panel_raw = pd.read_csv(cfg.panel_path, header=None)[0].astype(str).tolist()
                 # official pert_counts.csv has a 'target_gene' title row; separate junk rows
@@ -255,11 +264,16 @@ class Data:
                     print(f'##### vcc: dropping {len(junk)} non-gene panel rows: {junk} #####')
                 if missing:
                     print(f'##### vcc: {len(missing)} panel genes not in var_names: {missing} #####')
-                sc.pp.highly_variable_genes(self.adata, n_top_genes=n_top_genes)
-                hv = self.adata.var['highly_variable'].copy()
+                sc.pp.highly_variable_genes(hvg_input, n_top_genes=n_top_genes)
+                hv = hvg_input.var['highly_variable'].copy()
                 for g in panel:
                     hv.loc[g] = True
                 self.adata.var['highly_variable'] = hv.to_numpy()
+                if data_space == 'counts':
+                    # carry HVG stats into the counts adata: dispersions_norm is used
+                    # by generate_submission.py to rank the fixed top-1000 modeled genes
+                    for col in ('means', 'dispersions', 'dispersions_norm'):
+                        self.adata.var[col] = hvg_input.var[col].to_numpy()
                 self.adata = self.adata[:, hv.to_numpy()].copy()
                 self.adata.write(cache)
                 print(f'##### vcc: processed cached to {cache} #####')
@@ -275,8 +289,16 @@ class Data:
                 n_ctl_test = int(self.adata_test.obs['is_control'].sum())
                 assert n_ctl_test > 0, f'holdout line {cfg.holdout_line} has no control cells'
                 print(f'##### vcc: train {self.adata_train.n_obs} cells / test({cfg.holdout_line}) {self.adata_test.n_obs} cells ({n_ctl_test} ctl) #####')
-                sc.pp.highly_variable_genes(self.adata_test, inplace=True, n_top_genes=infer_top_gene)
-                self.adata_test = self.adata_test[:, self.adata_test.var['highly_variable']]
+                if data_space == 'counts':
+                    # test-set HVG selection also runs on a log1p(CP10k) copy; X stays counts
+                    tmp_test = self.adata_test.copy()
+                    sc.pp.normalize_total(tmp_test, target_sum=1e4)
+                    sc.pp.log1p(tmp_test)
+                    sc.pp.highly_variable_genes(tmp_test, inplace=True, n_top_genes=infer_top_gene)
+                    self.adata_test = self.adata_test[:, tmp_test.var['highly_variable']]
+                else:
+                    sc.pp.highly_variable_genes(self.adata_test, inplace=True, n_top_genes=infer_top_gene)
+                    self.adata_test = self.adata_test[:, self.adata_test.var['highly_variable']]
             else:
                 self.adata.obs['mode'] = 'train'
                 self.adata.obs['Drug1'] = self.adata.obs['condition'].str.split('+').str[0]
