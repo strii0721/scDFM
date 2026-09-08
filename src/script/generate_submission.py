@@ -12,6 +12,9 @@ Pipeline per (context, perturbation):
   data_space='counts': pred = ODE(solve, x0 ~ Gaussian noise, cond = pert gene) on
       modeled genes; full = source raw counts with modeled genes overwritten;
       counts ~ Poisson(clip(pred, 0)) -> int32
+  data_space='cpm':    pred_cpm = ODE(...) on CP10k-linear space; full = source
+      CP10k with modeled genes overwritten; lambda = full * (depth/1e4); counts ~
+      Poisson(lambda) -> int32, CSR (no log1p, no expm1)
   data_space='log1p':  pred_log1p = ODE(...); full_log1p = modeled <- pred, other <-
       source normalized values; lambda = expm1(full_log1p); scale so E[total] =
       source cell's raw depth; counts ~ Poisson(lambda) -> int32, CSR
@@ -153,9 +156,13 @@ def main():
             if config.data_space == 'counts':
                 # counts space: conditioning source + non-modeled genes use raw counts
                 norm = raw
+            elif config.data_space == 'cpm':
+                # CP10k linear (normalize_total, no log1p) — same convention as training
+                norm = raw.copy()
+                totals = np.asarray(norm.sum(axis=1)).ravel()
+                norm = sparse.diags(1e4 / np.maximum(totals, 1.0)) @ norm
             else:
-                # normalize on full axis, same convention as training
-                from scanpy.preprocessing import normalize_total
+                # log1p space: normalize + log1p on full axis, same convention as training
                 norm = raw.copy()
                 totals = np.asarray(norm.sum(axis=1)).ravel()
                 norm = sparse.diags(1e4 / np.maximum(totals, 1.0)) @ norm
@@ -197,6 +204,17 @@ def main():
             full = src_norm.toarray()                      # (400, 18533) copy of control counts
             full[:, modeled_idx] = pred_modeled            # modeled genes <- model
             lam = np.clip(full, 0.0, None)
+            counts = np.random.default_rng(stable_seed(ctx, pert, config.seed + 7)).poisson(lam)
+        elif config.data_space == 'cpm':
+            # cpm space: modeled <- predicted CP10k, non-modeled keep control CP10k;
+            # rows sum to ~1e4 but predicted modeled genes can drift off-scale, so
+            # rescale to each source cell's exact depth (same as the log1p branch).
+            # No expm1 — values are already on the linear scale.
+            full = src_norm.toarray()                      # (400, 18533) copy of control CP10k
+            full[:, modeled_idx] = pred_modeled            # modeled genes <- model (CP10k)
+            lam = np.clip(full, 0.0, None)
+            scale = depths / np.maximum(lam.sum(axis=1), 1.0)
+            lam = lam * scale[:, None]
             counts = np.random.default_rng(stable_seed(ctx, pert, config.seed + 7)).poisson(lam)
         else:
             full_log = src_norm.toarray()                  # (400, 18533) copy of control

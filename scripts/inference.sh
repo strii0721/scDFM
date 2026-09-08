@@ -32,6 +32,7 @@ echo "checkpoint: $CKPT"
 if [ -z "${DATA_SPACE:-}" ]; then
   case "$CKPT" in
     *space_counts*) DATA_SPACE=counts ;;
+    *space_cpm*)    DATA_SPACE=cpm ;;
     *space_log1p*)  DATA_SPACE=log1p ;;
     *) DATA_SPACE=log1p ;;  # 旧目录名无 space 段
   esac

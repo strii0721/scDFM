@@ -7,7 +7,7 @@ ranks write the same h5ad on NFS -> h5py file-lock collision -> BlockingIOError
 once before torchrun; all ranks then only READ the artifacts.
 
 Usage (same tyro args as training):
-  python src/script/build_vcc_cache.py --data_name=vcc [--data_space=counts]
+  python src/script/build_vcc_cache.py --data_name=vcc [--data_space=cpm]
 """
 import os
 import sys

@@ -49,10 +49,12 @@ class FlowConfig:
     data_path: str = VCC_REMOTE_RESOURCE_ROOT
     corpus_path: str = VCC_REMOTE_CORPUS_PATH
     panel_path: str = VCC_REMOTE_PANEL_PATH
+    # 'cpm'    = CP10k linear: normalize_total(target_sum=1e4), NO log1p. Rows
+    #            comparable across cells, values stay on linear count-per-10k scale.
     # 'counts' = train/predict raw UMI counts directly (no normalize_total/log1p);
-    # 'log1p'  = legacy log1p(CP10k) space. Cache files are space-suffixed so the
-    # two spaces never share a processed cache.
-    data_space: str = 'counts'
+    # 'log1p'  = legacy log1p(CP10k) space.
+    # Cache/mask files are space-suffixed so spaces never share artifacts.
+    data_space: str = 'cpm'
     holdout_line: str = 'K562'  # leave-one-line-out validation line
     line_col: str = 'cell_line'
     crispr_type_col: str = 'crispr_type'
@@ -94,7 +96,7 @@ class FlowConfig:
     @property
     def processed_cache_fname(self) -> str:
         """Per-space processed cache name (data/vcc/<name>.h5ad)."""
-        suffix = '_counts' if getattr(self, 'data_space', 'log1p') == 'counts' else ''
+        suffix = {'counts': '_counts', 'cpm': '_cpm'}.get(getattr(self, 'data_space', 'log1p'), '')
         return f'processed_n{self.n_top_genes}{suffix}.h5ad'
 
     @property
@@ -102,8 +104,8 @@ class FlowConfig:
         """Per-space co-expression mask name (data/vcc/<name>.pt).
 
         The graph is built from the space's own processed data (pearson on counts
-        vs log1p differs), so counts and log1p runs must not share a mask file.
+        vs cpm vs log1p differs), so spaces must not share a mask file.
         """
         neg = '_negative_edge' if getattr(self, 'use_negative_edge', False) else ''
-        suffix = '_counts' if getattr(self, 'data_space', 'log1p') == 'counts' else ''
+        suffix = {'counts': '_counts', 'cpm': '_cpm'}.get(getattr(self, 'data_space', 'log1p'), '')
         return f'mask_fold_{self.fold}topk_{self.topk}{self.split_method}{neg}{suffix}.pt'

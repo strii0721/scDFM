@@ -94,9 +94,10 @@ def train_step(source, target, perturbation_id, vf, criterion, accelerator, nois
     if mode=="predict_y":
         # source, target = ot_sampler.sample_plan(source, target)
         t = torch.rand(B, device=device)
-        if noise_type=="Gaussian" or getattr(config, 'data_space', 'log1p') == 'counts':
-            # counts-space training always uses Gaussian noise: the Poisson noise
-            # source is log1p-space-specific (it expm1's its input -> inf on counts)
+        if noise_type=="Gaussian" or getattr(config, 'data_space', 'log1p') in ('counts', 'cpm'):
+            # counts/cpm-space training always uses Gaussian noise: the Poisson
+            # noise source is log1p-space-specific (it expm1's its input -> inf
+            # on counts and on CP10k-linear values)
             target_noise = torch.randn_like(source)
         elif noise_type=="Poisson":
             target_noise = make_lognorm_poisson_noise(
@@ -223,8 +224,8 @@ def wrapped_vf(target,t,source,perturbation_id,vf,gene_ids, gene_all):
 def generate_sample(wrapped_vf,source,condition_vec=None,vf=None,gene_ids=None,gene_all=None,steps=20,method="rk4"):
     
     noise_type = config.noise_type
-    if noise_type=="Gaussian" or getattr(config, 'data_space', 'log1p') == 'counts':
-        # must match train_step's noise source: counts space -> Gaussian
+    if noise_type=="Gaussian" or getattr(config, 'data_space', 'log1p') in ('counts', 'cpm'):
+        # must match train_step's noise source: counts/cpm space -> Gaussian
         target_noise = torch.randn(source.shape[0],config.infer_top_gene,device=source.device)
     elif noise_type=="Poisson":
         target_noise = make_lognorm_poisson_noise(

@@ -248,6 +248,13 @@ class Data:
                     sc.pp.normalize_total(self.adata, target_sum=1e4)
                     sc.pp.log1p(self.adata)
                     hvg_input = self.adata
+                elif data_space == 'cpm':
+                    # CP10k linear: cross-cell comparable, no log1p. HVG still runs
+                    # on a log1p(CP10k) copy (scanpy seurat flavor expm1's its input);
+                    # self.adata is already CP10k so the copy needs only log1p.
+                    sc.pp.normalize_total(self.adata, target_sum=1e4)
+                    hvg_input = self.adata.copy()
+                    sc.pp.log1p(hvg_input)
                 else:  # 'counts'
                     hvg_input = self.adata.copy()
                     sc.pp.normalize_total(hvg_input, target_sum=1e4)
@@ -269,8 +276,8 @@ class Data:
                 for g in panel:
                     hv.loc[g] = True
                 self.adata.var['highly_variable'] = hv.to_numpy()
-                if data_space == 'counts':
-                    # carry HVG stats into the counts adata: dispersions_norm is used
+                if data_space in ('counts', 'cpm'):
+                    # carry HVG stats into the training adata: dispersions_norm is used
                     # by generate_submission.py to rank the fixed top-1000 modeled genes
                     for col in ('means', 'dispersions', 'dispersions_norm'):
                         self.adata.var[col] = hvg_input.var[col].to_numpy()
@@ -289,10 +296,13 @@ class Data:
                 n_ctl_test = int(self.adata_test.obs['is_control'].sum())
                 assert n_ctl_test > 0, f'holdout line {cfg.holdout_line} has no control cells'
                 print(f'##### vcc: train {self.adata_train.n_obs} cells / test({cfg.holdout_line}) {self.adata_test.n_obs} cells ({n_ctl_test} ctl) #####')
-                if data_space == 'counts':
-                    # test-set HVG selection also runs on a log1p(CP10k) copy; X stays counts
+                if data_space in ('counts', 'cpm'):
+                    # test-set HVG selection also runs on a log1p(CP10k) copy; X keeps
+                    # its training-space values (counts / cpm). cpm is already CP10k so
+                    # only log1p is needed (no double normalize_total).
                     tmp_test = self.adata_test.copy()
-                    sc.pp.normalize_total(tmp_test, target_sum=1e4)
+                    if data_space == 'counts':
+                        sc.pp.normalize_total(tmp_test, target_sum=1e4)
                     sc.pp.log1p(tmp_test)
                     sc.pp.highly_variable_genes(tmp_test, inplace=True, n_top_genes=infer_top_gene)
                     self.adata_test = self.adata_test[:, tmp_test.var['highly_variable']]
