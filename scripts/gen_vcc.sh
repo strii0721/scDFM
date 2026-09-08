@@ -9,6 +9,9 @@
 # 注意: prep 内存需求 ~31GB（远程 1TB RAM 无压力）；产物 .vcc 约 2.7GB
 set -euo pipefail
 
+# vcc CLI: 非交互 shell（tmux/nohup）PATH 可能不含 ~/.local/bin，显式回退
+VCC_BIN="${VCC_BIN:-$(command -v vcc 2>/dev/null || echo "$HOME/.local/bin/vcc")}"
+
 CONTROLS_DIR="${CONTROLS_DIR:-/ssd1/ict2/Projects/vcc-2026/resources/datasets/controls}"
 IN_H5AD="${IN_H5AD:-output/inference/prediction.h5ad}"
 OUT_VCC="${OUT_VCC:-output/inference/prediction.vcc}"
@@ -24,5 +27,5 @@ tail -n +2 "$CONTROLS_DIR/gene_names.csv" > "$GENE_CSV"
 DRY=""
 [ "${1:-}" = "--dry-run" ] && DRY="--dry-run"
 
-vcc prep -i "$IN_H5AD" -g "$GENE_CSV" --perts "$CONTROLS_DIR/pert_counts.csv" -o "$OUT_VCC" $DRY
+"$VCC_BIN" prep -i "$IN_H5AD" -g "$GENE_CSV" --perts "$CONTROLS_DIR/pert_counts.csv" -o "$OUT_VCC" $DRY
 echo "done: $OUT_VCC"

@@ -13,6 +13,9 @@
 #     --resume 续传（见 skill vcc-2026 → references/vcc-cli-pipeline.md 跨机续传配方）。
 set -euo pipefail
 
+# vcc CLI: 非交互 shell（tmux/nohup）PATH 可能不含 ~/.local/bin，显式回退
+VCC_BIN="${VCC_BIN:-$(command -v vcc 2>/dev/null || echo "$HOME/.local/bin/vcc")}"
+
 VCC_FILE="${1:-output/inference/prediction.vcc}"
 [ -f "$VCC_FILE" ] || { echo "missing: $VCC_FILE (先跑 scripts/gen-vcc.sh)" >&2; exit 1; }
 
@@ -22,4 +25,4 @@ ARGS=()
 [ "${RESUME:-0}" = "1" ] && ARGS+=(--resume)
 [ "${NO_WAIT:-0}" != "1" ] && ARGS+=(--wait)
 
-vcc submit "$VCC_FILE" -m "$MODEL_NAME" "${ARGS[@]}"
+"$VCC_BIN" submit "$VCC_FILE" -m "$MODEL_NAME" "${ARGS[@]}"
