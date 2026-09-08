@@ -74,6 +74,9 @@ def stable_seed(ctx, pert, base):
 
 
 def main():
+    import faulthandler
+    import signal
+    faulthandler.register(signal.SIGUSR1)
     config = tyro.cli(GenConfig, description=__doc__)
     assert config.checkpoint_path and os.path.exists(config.checkpoint_path)
     assert config.controls_dir and os.path.isdir(config.controls_dir)
