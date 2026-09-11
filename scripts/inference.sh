@@ -31,8 +31,10 @@ echo "checkpoint: $CKPT"
 mkdir -p "$PARTIALS"
 rm -f "$PARTIALS"/partial_s*.h5ad
 
-COMMON="--data_name=vcc --batch_size=128 --ode_steps=${ODE_STEPS:-12} \
+COMMON="--data_name=vcc --batch_size=64 \
   --checkpoint_path $CKPT"
+# ODE 步数缺省走 config（ODEDEF_STEPS=100，论文口径）；显式设置才覆盖
+[ -n "${ODE_STEPS:-}" ] && COMMON="$COMMON --ode_steps=$ODE_STEPS"
 # mask 缺省留空 → generate_submission 按训练同款公式派生（cache/vcc/mask_fold_*）
 [ -n "${MASK_FNAME:-}" ] && COMMON="$COMMON --mask_fname=$MASK_FNAME"
 EXTRA=""
@@ -44,6 +46,12 @@ for s in $(seq 0 $(( ${NUM_SHARDS:-8} - 1 ))); do
     > "$OUT_ROOT/shard_$s.log" 2>&1 &
 done
 wait
+N_EXPECT="${NUM_SHARDS:-8}"
+N_GOT=$(ls "$PARTIALS"/partial_s*.h5ad 2>/dev/null | wc -l)
+if [ "$N_GOT" -ne "$N_EXPECT" ]; then
+  echo "shard failure: $N_GOT/$N_EXPECT partials produced (see output/inference/shard_*.log)" >&2
+  exit 1
+fi
 echo "all shards done"
 
 # ---- merge shards（原 merge_submission.py 逻辑） ----
