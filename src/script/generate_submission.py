@@ -58,7 +58,7 @@ def corpus_stem(config) -> str:
 def artifact_paths(config):
     """与 data.py/process_vocab 完全一致的派生规则（只读）。"""
     stem = corpus_stem(config)
-    src_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # repo/src
     cache_dir = os.path.join(config.data_path, config.data_name)  # cache/vcc
     cache = os.path.join(cache_dir, f'processed_n{config.n_top_genes}_{stem}.h5ad')
     if config.mask_fname:
