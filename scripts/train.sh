@@ -9,7 +9,7 @@
 # 训练超参/数据路径全部走 config/config_flow.py 默认值（VCC 主线已收口），
 # 这里只传运行态参数；其他覆盖直接追加 tyro 参数:
 #   bash scripts/train.sh --gamma=1.0 --max_test_perts=0
-# 产物: output/train/flow-fusion-.../iteration_N/checkpoint.pt（见 config.make_path）
+# 产物: output/train/{YYYY-MM-DD_HH-MM}/iteration_N/checkpoint.pt（见 config.make_path，时间戳即实验名）
 set -euo pipefail
 export PYTHONPATH=.
 
