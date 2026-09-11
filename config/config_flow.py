@@ -15,13 +15,13 @@ class FlowConfig:
     # Flow model type
     model_type: str = 'origin'
 
-    # Flow Matching specific parameters
-    batch_size: int = 48
+    # Flow Matching specific parameters（默认=论文附录 A.4.3 口径）
+    batch_size: int = 96          # 论文全局 batch=96；8 卡 DDP 时 train.sh 按 96/GPUS 分摊到每 rank
     ntoken: int = 512
     d_model: int = 512
-    lr: float = 5e-5
-    steps: int = 5000
-    eta_min: float = 1e-7
+    lr: float = 5e-5              # 论文 Adam lr=5e-5 余弦衰减
+    steps: int = 100000           # 论文 100,000 优化步
+    eta_min: float = 1e-6         # 论文衰减下界 ηmin=1e-6
     devices: str = "1"
     test_only: bool = False
     # Perturbation related parameters
@@ -39,12 +39,12 @@ class FlowConfig:
     infer_top_gene: int = 1000
     n_top_genes: int = 5000
     checkpoint_path: str = ''
-    gamma: float = 0.5
+    gamma: float = 0.5             # 论文 MMD λ=0.5
     split_method: str = 'single'
-    use_mmd_loss: bool = True
+    use_mmd_loss: bool = True      # 论文带 MMD 分布正则（动态多核 RBF）
     fold: int = 0
-    use_negative_edge: bool = False
-    topk: int = 30
+    use_negative_edge: bool = True # 论文 kNN k=30 带符号相关（signed mask）
+    topk: int = 30                 # 论文 k=30
 
     # VCC-2026 mode (data_name='vcc')
     # data_path = 缓存/共表达图/split 产物根目录，相对项目根（每次在项目根运行）；

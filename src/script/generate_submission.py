@@ -34,7 +34,7 @@ from src.models.instantiate_model import instantiate_model
 from src.tokenizer.gene_tokenizer import GeneVocab
 from src.utils.utils import make_lognorm_poisson_noise
 
-ODEDEF_STEPS = 20
+ODEDEF_STEPS = 100  # 论文：Euler K=100 均匀步（附录 A.4.3）
 
 
 @dataclass
@@ -211,7 +211,7 @@ def main():
                     lambda t, x: ode_forward(t, x, src_b, pid_b),
                     noise,
                     torch.linspace(0, 1, config.ode_steps, device=device),
-                    atol=1e-4, rtol=1e-4, method='rk4',
+                    atol=1e-4, rtol=1e-4, method='euler',
                 )
                 preds.append(torch.clamp(traj[-1], min=0).float())
         pred_modeled = torch.cat(preds, dim=0).cpu().numpy()  # (400, L)

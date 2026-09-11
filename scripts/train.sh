@@ -15,7 +15,11 @@ export PYTHONPATH=.
 
 GPUS="${GPUS:-8}"
 
-ARGS=(--data_name=vcc)
+# 论文全局 batch=96（附录 A.4.3）；多卡 DDP 时按卡数分摊到每 rank
+BATCH_TOTAL="${BATCH_TOTAL:-96}"
+RANK_BATCH=$((BATCH_TOTAL / GPUS))
+
+ARGS=(--data_name=vcc --batch_size="$RANK_BATCH")
 [ -n "${STEPS:-}" ] && ARGS+=(--steps="$STEPS")
 [ -n "${PRINT_EVERY:-}" ] && ARGS+=(--print_every="$PRINT_EVERY")
 

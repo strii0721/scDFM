@@ -224,7 +224,7 @@ def wrapped_vf(target,t,source,perturbation_id,vf,gene_ids, gene_all):
     return predicted_x_t_velocity
 
 @torch.no_grad()
-def generate_sample(wrapped_vf,source,condition_vec=None,vf=None,gene_ids=None,gene_all=None,steps=20,method="rk4"):
+def generate_sample(wrapped_vf,source,condition_vec=None,vf=None,gene_ids=None,gene_all=None,steps=100,method="euler"):
     
     noise_type = config.noise_type
     if noise_type=="Gaussian":
