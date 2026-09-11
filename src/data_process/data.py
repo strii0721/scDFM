@@ -22,9 +22,8 @@ class Data:
     def __init__(self, data_path='../../data', config=None):
         self.data_path = data_path
         self.config = config
-        if not os.path.exists(data_path):
-            raise ValueError(data_path + ' does not exist')
-            # os.makedirs(data_path)
+        # data_path 可为相对路径（如 'cache'，须在项目根运行）——自动创建
+        os.makedirs(data_path, exist_ok=True)
 
         
     def load_data(self, data_name = None, data_path = None):

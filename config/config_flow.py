@@ -47,7 +47,9 @@ class FlowConfig:
     topk: int = 30
 
     # VCC-2026 mode (data_name='vcc')
-    data_path: str = VCC_REMOTE_RESOURCE_ROOT
+    # data_path = 缓存/共表达图/split 产物根目录，相对项目根（每次在项目根运行）；
+    # 语料数据集本身走 corpus_path（绝对路径）。勿放 resources/（那是数据集目录）。
+    data_path: str = 'cache'
     corpus_path: str = VCC_REMOTE_CORPUS_PATH
     panel_path: str = VCC_REMOTE_PANEL_PATH
     line_col: str = 'cell_line'
