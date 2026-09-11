@@ -1,4 +1,5 @@
 import scanpy as sc
+import anndata as ad
 import pandas as pd
 import numpy as np
 import json
@@ -222,8 +223,8 @@ class Data:
         elif self.data_name == 'vcc':
             cfg = self.config
             assert cfg is not None, 'vcc mode requires Data(config=...)'
-            data_space = getattr(cfg, 'data_space', 'log1p')
-            cache = os.path.join(self.data_path, self.data_name, cfg.processed_cache_fname)
+            corpus_stem = os.path.splitext(os.path.basename(str(cfg.corpus_path)))[0]
+            cache = os.path.join(self.data_path, self.data_name, f'processed_n{n_top_genes}_{corpus_stem}.h5ad')
             os.makedirs(os.path.dirname(cache), exist_ok=True)
             if os.path.exists(cache):
                 print(f'##### loading cached processed h5ad: {cache} #####')
@@ -239,26 +240,10 @@ class Data:
                 is_ctl = tg == 'non-targeting'
                 self.adata.obs['condition'] = np.where(is_ctl, 'control', tg + '+control')
                 self.adata.obs['is_control'] = is_ctl
-                # 3) space transform. counts space keeps raw UMI counts; log1p space
-                #    normalizes first. Either way HVG selection runs on a log1p(CP10k)
-                #    copy (scanpy>=1.11 seurat-flavor HVG unconditionally expm1's its
-                #    input, so it must be log-space) -> identical gene set / dispersion
-                #    stats in both spaces.
-                if data_space == 'log1p':
-                    sc.pp.normalize_total(self.adata, target_sum=1e4)
-                    sc.pp.log1p(self.adata)
-                    hvg_input = self.adata
-                elif data_space == 'cpm':
-                    # CP10k linear: cross-cell comparable, no log1p. HVG still runs
-                    # on a log1p(CP10k) copy (scanpy seurat flavor expm1's its input);
-                    # self.adata is already CP10k so the copy needs only log1p.
-                    sc.pp.normalize_total(self.adata, target_sum=1e4)
-                    hvg_input = self.adata.copy()
-                    sc.pp.log1p(hvg_input)
-                else:  # 'counts'
-                    hvg_input = self.adata.copy()
-                    sc.pp.normalize_total(hvg_input, target_sum=1e4)
-                    sc.pp.log1p(hvg_input)
+                # 3) paper preprocessing: normalize_total(CP10k) -> log1p -> HVG
+                #    (log-space linear paths, upstream combosciplex path)
+                sc.pp.normalize_total(self.adata, target_sum=1e4)
+                sc.pp.log1p(self.adata)
                 # 4) HVG + force panel genes
                 panel_raw = pd.read_csv(cfg.panel_path, header=None)[0].astype(str).tolist()
                 # official pert_counts.csv has a 'target_gene' title row; separate junk rows
@@ -271,53 +256,62 @@ class Data:
                     print(f'##### vcc: dropping {len(junk)} non-gene panel rows: {junk} #####')
                 if missing:
                     print(f'##### vcc: {len(missing)} panel genes not in var_names: {missing} #####')
-                sc.pp.highly_variable_genes(hvg_input, n_top_genes=n_top_genes)
-                hv = hvg_input.var['highly_variable'].copy()
+                sc.pp.highly_variable_genes(self.adata, n_top_genes=n_top_genes)
+                hv = self.adata.var['highly_variable'].copy()
                 for g in panel:
                     hv.loc[g] = True
                 self.adata.var['highly_variable'] = hv.to_numpy()
-                if data_space in ('counts', 'cpm'):
-                    # carry HVG stats into the training adata: dispersions_norm is used
-                    # by generate_submission.py to rank the fixed top-1000 modeled genes
-                    for col in ('means', 'dispersions', 'dispersions_norm'):
-                        self.adata.var[col] = hvg_input.var[col].to_numpy()
                 self.adata = self.adata[:, hv.to_numpy()].copy()
+                # obs/_index from the merged corpus reads back as a pandas
+                # StringArray; anndata <0.13 refuses to write nullable strings
+                # unless opted in (0.13+ default-on, setting may be removed)
+                if hasattr(ad.settings, 'allow_write_nullable_strings'):
+                    ad.settings.allow_write_nullable_strings = True
                 self.adata.write(cache)
                 print(f'##### vcc: processed cached to {cache} #####')
-            # 5) split: leave-one-line-out (holdout_line='none' -> train on ALL cells)
-            if cfg.holdout_line and str(cfg.holdout_line).lower() != 'none':
-                lines = self.adata.obs[cfg.line_col].astype(str)
-                assert cfg.holdout_line in set(lines), f'holdout line {cfg.holdout_line} not in corpus'
-                self.adata.obs['mode'] = np.where(lines == cfg.holdout_line, 'test', 'train')
-                self.adata.obs['Drug1'] = self.adata.obs['condition'].str.split('+').str[0]
-                self.adata.obs['Drug2'] = self.adata.obs['condition'].str.split('+').str[-1]
-                self.adata_train = self.adata[self.adata.obs['mode'] == 'train']
-                self.adata_test = self.adata[self.adata.obs['mode'] == 'test']
-                n_ctl_test = int(self.adata_test.obs['is_control'].sum())
-                assert n_ctl_test > 0, f'holdout line {cfg.holdout_line} has no control cells'
-                print(f'##### vcc: train {self.adata_train.n_obs} cells / test({cfg.holdout_line}) {self.adata_test.n_obs} cells ({n_ctl_test} ctl) #####')
-                if data_space in ('counts', 'cpm'):
-                    # test-set HVG selection also runs on a log1p(CP10k) copy; X keeps
-                    # its training-space values (counts / cpm). cpm is already CP10k so
-                    # only log1p is needed (no double normalize_total).
-                    tmp_test = self.adata_test.copy()
-                    if data_space == 'counts':
-                        sc.pp.normalize_total(tmp_test, target_sum=1e4)
-                    sc.pp.log1p(tmp_test)
-                    sc.pp.highly_variable_genes(tmp_test, inplace=True, n_top_genes=infer_top_gene)
-                    self.adata_test = self.adata_test[:, tmp_test.var['highly_variable']]
+            # 5) split: single-gene holdout — 80/20 panel-gene split x 5 folds
+            #    (upstream additive/unseen splits are combo-oriented; single-gene
+            #    CRISPRi needs its own. Held-out genes' cells + all control cells
+            #    form the test set, mirroring upstream's test|control pattern.)
+            if split_method == 'single':
+                tg_all = self.adata.obs['target_gene'].astype(str)
+                panel_genes = sorted(g for g in tg_all.unique() if g != 'non-targeting')
+                # split file keyed by corpus (per-corpus gene sets differ)
+                split_file = os.path.join(self.data_path, self.data_name,
+                                          f'split_results_single_{corpus_stem}.pkl')
+                if os.path.exists(split_file):
+                    with open(split_file, 'rb') as f:
+                        self.split_results = pickle.load(f)
                 else:
-                    sc.pp.highly_variable_genes(self.adata_test, inplace=True, n_top_genes=infer_top_gene)
-                    self.adata_test = self.adata_test[:, self.adata_test.var['highly_variable']]
-            else:
-                self.adata.obs['mode'] = 'train'
+                    rng = np.random.default_rng(0)
+                    shuffled = np.array(panel_genes)[rng.permutation(len(panel_genes))]
+                    self.split_results = []
+                    n_test = max(1, int(round(len(panel_genes) * 0.2)))
+                    for i in range(5):
+                        test_genes = shuffled[i * n_test:(i + 1) * n_test].tolist()
+                        self.split_results.append({
+                            'train': [g for g in panel_genes if g not in set(test_genes)],
+                            'test': test_genes,
+                        })
+                    with open(split_file, 'wb') as f:
+                        pickle.dump(self.split_results, f)
+                    print('split results saved')
+                fold = kwargs.get('fold', 0)
+                test_genes = set(self.split_results[fold]['test'])
+                is_test = tg_all.isin(test_genes).to_numpy()
+                self.adata.obs['mode'] = np.where(is_test, 'test', 'train')
                 self.adata.obs['Drug1'] = self.adata.obs['condition'].str.split('+').str[0]
                 self.adata.obs['Drug2'] = self.adata.obs['condition'].str.split('+').str[-1]
-                self.adata_train = self.adata
-                # non-empty view as placeholder test set (test() never runs with
-                # --no-do_eval; empty frames break TestDataset's obs apply)
-                self.adata_test = self.adata
-                print(f'##### vcc: NO holdout - train on ALL {self.adata_train.n_obs} cells #####')
+                self.adata_train = self.adata[self.adata.obs['mode'] == 'train'].copy()
+                self.adata_test = self.adata[(self.adata.obs['mode'] == 'test') | self.adata.obs['is_control']].copy()
+                n_ctl_test = int(self.adata_test.obs['is_control'].sum())
+                print(f'##### vcc: fold {fold} train {self.adata_train.n_obs} cells / '
+                      f'test {self.adata_test.n_obs} cells (held-out genes {len(test_genes)}, ctl {n_ctl_test}) #####')
+                # test-set HVG selection (infer_top_gene), upstream-style
+                sc.pp.highly_variable_genes(self.adata_test, inplace=True, n_top_genes=infer_top_gene)
+                self.adata_test = self.adata_test[:, self.adata_test.var['highly_variable']]
+            else:
+                raise ValueError(f'vcc requires split_method="single", got {split_method!r}')
             condition = np.unique(list(self.adata.obs['condition']))
             unique_perturbation = []
             np.array([unique_perturbation.extend(perturbation.split('+')) for perturbation in condition])
@@ -325,7 +319,7 @@ class Data:
             unique_perturbation.sort()
             self.unique_perturbation = unique_perturbation
             self.perturbation_dict = {perturbation: i for i, perturbation in enumerate(unique_perturbation)}
-            self.split_results = []
+            self.split_results = self.split_results if hasattr(self, 'split_results') else []
         else:
             raise ValueError(self.data_name + ' is not a valid data name')
         
@@ -334,9 +328,11 @@ class Data:
             fold = kwargs['fold']
         else:
             fold = 0
-        if self.data_name == 'vcc' and cfg is not None and hasattr(cfg, 'coexpr_mask_fname'):
-            # per-space mask file (graph built from the space's own data)
-            mask_path = os.path.join(self.data_path, self.data_name, cfg.coexpr_mask_fname)
+        if self.data_name == 'vcc' and cfg is not None:
+            # per-corpus mask file (graph built from this corpus's own train data)
+            _stem = os.path.splitext(os.path.basename(str(cfg.corpus_path)))[0]
+            mask_path = os.path.join(self.data_path, self.data_name,
+                                     f'mask_fold_{fold}topk_{k}{split_method}_{_stem}.pt')
         elif use_negative_edge:
             mask_path = os.path.join(self.data_path, self.data_name,'mask_fold_'+str(fold)+'topk_'+str(k)+split_method+'_negative_edge'+'.pt')
         else:
@@ -360,6 +356,7 @@ class Data:
             mask = sorted_pad_mask(mask, pad_size=4, gene_names=list(self.adata_train.var_names))
             torch.save(mask, mask_path)
             print('mask saved')
+        self.mask_path = mask_path
         
         
     def load_flow_data(self, batch_size = 128):
@@ -369,8 +366,15 @@ class Data:
             
             return train_sampler , test_sampler, []
         elif self.data_name == 'norman' or self.data_name == 'norman_umi_go_filtered' or self.data_name == 'vcc':
-            train_sampler = TrainSampler(self.data_name, self.adata_train, ["Drug1", "Drug2"], self.perturbation_dict)
-            test_sampler = TestDataset(self.data_name, self.adata_test, ["Drug1", "Drug2"], self.perturbation_dict)
+            line_col = None
+            min_tgt_cells = 1
+            if self.data_name == 'vcc' and self.config is not None:
+                line_col = getattr(self.config, 'line_col', None)
+                min_tgt_cells = getattr(self.config, 'min_tgt_cells', 1)
+            train_sampler = TrainSampler(self.data_name, self.adata_train, ["Drug1", "Drug2"], self.perturbation_dict,
+                                         line_col=line_col, min_tgt_cells=min_tgt_cells)
+            test_sampler = TestDataset(self.data_name, self.adata_test, ["Drug1", "Drug2"], self.perturbation_dict,
+                                       line_col=line_col)
             return train_sampler , test_sampler, []
         else:
             raise ValueError(self.data_name + ' is not a valid data name')
@@ -388,7 +392,8 @@ class Data:
             raise ValueError(self.data_name + ' is not a valid data name')
         
 class TrainSampler:
-    def __init__(self, data_name, adata: sc.AnnData, perturbation_covariates: list[str], perturbation_dict: dict,):
+    def __init__(self, data_name, adata: sc.AnnData, perturbation_covariates: list[str], perturbation_dict: dict,
+                 line_col: Optional[str] = None, min_tgt_cells: int = 1):
         self.data_name = data_name
         self.adata = adata
         self.perturbation_covariates = perturbation_covariates
@@ -407,6 +412,40 @@ class TrainSampler:
         
         self.cells_name = self.adata.obs_names
         
+        # ---- line-aware pairing (same-cell-line source/target sampling) ----
+        # With multi-cell-line corpora the upstream implementation pairs a control
+        # cell from ANY line with a perturbed cell from ANY line (independent
+        # sampling). Under CFM the optimal velocity field is then independent of
+        # the control condition (c ⊥ x1 in the training distribution), so the
+        # model never learns line-consistent perturbation effects. Restrict both
+        # source and target pools to ONE cell line per batch.
+        self.line_col = line_col
+        self.min_tgt_cells = min_tgt_cells
+        self._line_aware = bool(line_col) and line_col in self.adata.obs.columns
+        self._ctl_pool = {}
+        self._tgt_pool = {}
+        self._eligible_lines = {}
+        if self._line_aware:
+            lines = self.adata.obs[line_col].astype(str).to_numpy()
+            pc = self.adata.obs['perturbation_covariates'].astype(str).to_numpy()
+            self._lines = np.unique(lines)
+            for L in self._lines:
+                self._ctl_pool[L] = np.nonzero(np.logical_and(lines == L, pc == 'control+control'))[0]
+            for pert in list(self._perturbation_covariates):
+                elig = []
+                for L in self._lines:
+                    idx = np.nonzero(np.logical_and(lines == L, pc == pert))[0]
+                    if len(idx) >= min_tgt_cells and len(self._ctl_pool[L]) > 0:
+                        self._tgt_pool[(pert, L)] = idx
+                        elig.append(L)
+                self._eligible_lines[pert] = elig
+            dropped = [p for p in self._perturbation_covariates if not self._eligible_lines[p]]
+            if dropped:
+                print(f'##### TrainSampler: dropping {len(dropped)} perturbations with no eligible line '
+                      f'(min_tgt_cells={min_tgt_cells}): {dropped} #####')
+            self._perturbation_covariates = np.array([p for p in self._perturbation_covariates
+                                                      if self._eligible_lines[p]])
+            self._perturbation_covariates.sort()
         
     def get_batch(self, batch_size: int, same_perturbation: bool = True):
         if same_perturbation:
@@ -416,15 +455,21 @@ class TrainSampler:
             
             perturbation_id = self._perturbation_covariates[perturbation_idx]
             
-            # get the target data
-            tgt_idx = (self.adata.obs['perturbation_covariates'] == perturbation_id).to_numpy().nonzero()[0]
+            if self._line_aware:
+                # same-line pairing: sample one eligible cell line uniformly, then
+                # draw both source (control) and target (perturbed) cells from that
+                # line only
+                elig = self._eligible_lines[perturbation_id]
+                line = elig[np.random.randint(len(elig))]
+                tgt_idx = self._tgt_pool[(perturbation_id, line)]
+                src_idx = self._ctl_pool[line]
+            else:
+                tgt_idx = (self.adata.obs['perturbation_covariates'] == perturbation_id).to_numpy().nonzero()[0]
+                src_idx = (self.adata.obs['perturbation_covariates'] == 'control+control').to_numpy().nonzero()[0]
             tgt_batch_idx = np.random.choice(tgt_idx, batch_size)
+            src_batch_idx = np.random.choice(src_idx, batch_size)
             
             tgt_batch = torch.from_numpy(self.adata.X[tgt_batch_idx].toarray())
-            
-            # get data from control
-            src_idx = (self.adata.obs['perturbation_covariates'] == 'control+control').to_numpy().nonzero()[0]
-            src_batch_idx = np.random.choice(src_idx, batch_size)
             
             src_batch = torch.from_numpy(self.adata.X[src_batch_idx].toarray())
             
@@ -440,7 +485,8 @@ class TrainSampler:
             raise ValueError('same_perturbation must be True')
             
 class TestDataset:
-    def __init__(self, data_name,adata: sc.AnnData, perturbation_covariates: list[str], perturbation_dict: dict,):
+    def __init__(self, data_name,adata: sc.AnnData, perturbation_covariates: list[str], perturbation_dict: dict,
+                 line_col: Optional[str] = None):
         self.data_name = data_name
         self.adata = adata
         self.perturbation_covariates = perturbation_covariates
@@ -459,21 +505,51 @@ class TestDataset:
         
         self.cells_name = self.adata.obs_names
         
-    def get_control_data(self,):
-        control_data = self.adata[self.adata.obs['is_control']]
+        # line-aware eval support: score each (perturbation, cell line) within its
+        # own line's control/target pools instead of mixing all lines
+        self.line_col = line_col
+        self._line_aware = bool(line_col) and line_col in self.adata.obs.columns
+        self._lines = np.unique(self.adata.obs[line_col].astype(str)) if self._line_aware else []
+        
+    def _mask(self, is_control: bool, line: Optional[str] = None, perturbation: Optional[str] = None):
+        mask = self.adata.obs['is_control'].to_numpy() if is_control else \
+            (self.adata.obs['perturbation_covariates'] == perturbation).to_numpy()
+        if line is not None and self._line_aware:
+            mask = mask & (self.adata.obs[self.line_col].astype(str).to_numpy() == line)
+        return mask
+    
+    def get_control_data(self, line: Optional[str] = None):
+        mask = self._mask(True, line=line)
+        control_data = self.adata[mask]
         return {
             'src_cell_data': torch.from_numpy(control_data.X.toarray()),
             'src_cell_id': control_data.obs_names,
-            'condition_id': torch.tensor(self.perturbation_covariates_id[self.adata.obs['is_control']]),
+            'condition_id': torch.tensor(self.perturbation_covariates_id[mask]),
         }
     
-    def get_perturbation_data(self, perturbation: str):
-        perturbation_data = self.adata[self.adata.obs['perturbation_covariates'] == perturbation]
+    def get_perturbation_data(self, perturbation: str, line: Optional[str] = None):
+        mask = self._mask(False, line=line, perturbation=perturbation)
+        perturbation_data = self.adata[mask]
         return {
             'tgt_cell_data': torch.from_numpy(perturbation_data.X.toarray()),
             'tgt_cell_id': perturbation_data.obs_names,
-            'condition_id': torch.tensor(self.perturbation_covariates_id[self.adata.obs['perturbation_covariates'] == perturbation]),
+            'condition_id': torch.tensor(self.perturbation_covariates_id[mask]),
         }
+    
+    def perturbation_line_pairs(self, min_tgt_cells: int = 1):
+        """(perturbation, line) combos to evaluate line-consistently."""
+        pairs = []
+        if self._line_aware:
+            pc = self.adata.obs['perturbation_covariates'].astype(str).to_numpy()
+            lines = self.adata.obs[self.line_col].astype(str).to_numpy()
+            for pert in self._perturbation_covariates:
+                for L in self._lines:
+                    n = int(np.logical_and(pc == pert, lines == L).sum())
+                    if n >= min_tgt_cells:
+                        pairs.append((pert, L))
+        else:
+            pairs = [(p, None) for p in self._perturbation_covariates]
+        return pairs
         
     
     
@@ -487,19 +563,24 @@ class PerturbationDataset(Dataset):
         
     def __len__(self):
         
-        return len(self.perturbations) * 1000  
+        return len(self.perturbations) * 1000 
     
     def __getitem__(self, idx):
         # 随机选一个 perturbation
         perturbation_idx = np.random.choice(len(self.perturbations), 1)[0]
         perturbation_id = self.perturbations[perturbation_idx]
 
-        # target batch
-        tgt_idx = (self.sampler.adata.obs['perturbation_covariates'] == perturbation_id).to_numpy().nonzero()[0]
+        if self.sampler._line_aware:
+            # same-line pairing (see TrainSampler.get_batch)
+            elig = self.sampler._eligible_lines[perturbation_id]
+            line = elig[np.random.randint(len(elig))]
+            tgt_idx = self.sampler._tgt_pool[(perturbation_id, line)]
+            src_idx = self.sampler._ctl_pool[line]
+        else:
+            tgt_idx = (self.sampler.adata.obs['perturbation_covariates'] == perturbation_id).to_numpy().nonzero()[0]
+            src_idx = self.control_idx
         tgt_batch_idx = np.random.choice(tgt_idx, self.batch_size)
-        
-        # source (control) batch
-        src_batch_idx = np.random.choice(self.control_idx, self.batch_size)
+        src_batch_idx = np.random.choice(src_idx, self.batch_size)
         if hasattr(self.sampler.adata.X[src_batch_idx], "toarray"):
             src_batch = torch.from_numpy(self.sampler.adata.X[src_batch_idx].toarray())
             tgt_batch = torch.from_numpy(self.sampler.adata.X[tgt_batch_idx].toarray())

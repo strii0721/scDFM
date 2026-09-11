@@ -94,10 +94,7 @@ def train_step(source, target, perturbation_id, vf, criterion, accelerator, nois
     if mode=="predict_y":
         # source, target = ot_sampler.sample_plan(source, target)
         t = torch.rand(B, device=device)
-        if noise_type=="Gaussian" or getattr(config, 'data_space', 'log1p') in ('counts', 'cpm'):
-            # counts/cpm-space training always uses Gaussian noise: the Poisson
-            # noise source is log1p-space-specific (it expm1's its input -> inf
-            # on counts and on CP10k-linear values)
+        if noise_type=="Gaussian":
             target_noise = torch.randn_like(source)
         elif noise_type=="Poisson":
             target_noise = make_lognorm_poisson_noise(
@@ -134,82 +131,88 @@ def train_step(source, target, perturbation_id, vf, criterion, accelerator, nois
     return loss
 
 @torch.inference_mode()
-def test(data_sampler, vf, accelerator,  batch_size=128, path='./',vocab=None,scheme='mse'):
+def test(data_sampler, vf, accelerator,  batch_size=128, path='./',vocab=None,scheme='mse', max_pairs=None):
     gene_ids_test = vocab.encode(list(data_sampler.adata.var_names))
     
     gene_ids_test = torch.tensor(gene_ids_test, dtype=torch.long, device=device)
-    perturbation_name_list = data_sampler._perturbation_covariates
-    control_data = data_sampler.get_control_data()
-    all_pred_expressions = [control_data['src_cell_data']]
-    obs_perturbation_name_pred = ['control']*control_data['src_cell_data'].shape[0]
-    all_target_expressions = [control_data['src_cell_data']]
-    obs_perturbation_name_real = ['control']*control_data['src_cell_data'].shape[0]
-    count = 0
-    print('perturbation_name_list:',len(perturbation_name_list))
-    for perturbation_name in perturbation_name_list:
-        if config.max_test_perts and count >= config.max_test_perts:
-            break
-        count += 1
-        perturbation_data = data_sampler.get_perturbation_data(perturbation_name)
-        target = perturbation_data['tgt_cell_data']
-        perturbation_id = perturbation_data['condition_id']
-        source = control_data['src_cell_data']
-        source = source.to(device)
-        perturbation_id = perturbation_id.to(device)
-        if config.perturbation_function == 'crisper':
-            perturbation_name_crisper = [inverse_dict[int(p_id)] for p_id in perturbation_id[0].cpu().numpy()]
-            perturbation_id = torch.tensor(vocab.encode(perturbation_name_crisper), dtype=torch.long, device=device)
-            perturbation_id = perturbation_id.repeat(source.shape[0],1)
-        
-        idx = torch.randperm(source.shape[0])
-        source = source[idx]
-        N = 128
-        source = source[:N]
-        
-        pred_expressions = []
-        for i in trange(0, N, batch_size):
-            batch_perturbation_id = perturbation_id[0].repeat(source[i:i+batch_size].shape[0],1)
+    # line-consistent eval: each (perturbation, cell line) pair is scored against
+    # its OWN line's control/target pools (see TestDataset.perturbation_line_pairs)
+    pairs = data_sampler.perturbation_line_pairs(min_tgt_cells=1)
+    if max_pairs:
+        pairs = pairs[:max_pairs]
+    elif config.max_test_perts:
+        pairs = pairs[:config.max_test_perts]
+    line_aware = data_sampler._line_aware
+    lines = sorted({L for _, L in pairs}) if line_aware else [None]
+    print(f'eval pairs: {len(pairs)} across {len(lines)} lines')
+    per_line_scores = []
+    for L in lines:
+        pair_L = [(p, l) for p, l in pairs if l == L]
+        control_data = data_sampler.get_control_data(line=L)
+        all_pred, all_tgt = [control_data['src_cell_data']], [control_data['src_cell_data']]
+        obs_p = ['control'] * control_data['src_cell_data'].shape[0]
+        obs_r = ['control'] * control_data['src_cell_data'].shape[0]
+        for perturbation_name, _ in pair_L:
+            perturbation_data = data_sampler.get_perturbation_data(perturbation_name, line=L)
+            target = perturbation_data['tgt_cell_data']
+            perturbation_id = perturbation_data['condition_id']
+            source = control_data['src_cell_data'].to(device)
+            perturbation_id = perturbation_id.to(device)
+            if config.perturbation_function == 'crisper':
+                perturbation_name_crisper = [inverse_dict[int(p_id)] for p_id in perturbation_id[0].cpu().numpy()]
+                perturbation_id = torch.tensor(vocab.encode(perturbation_name_crisper), dtype=torch.long, device=device)
+                perturbation_id = perturbation_id.repeat(source.shape[0],1)
             
-            batch_perturbation_id = batch_perturbation_id.to(accelerator.device)
+            idx = torch.randperm(source.shape[0])
+            source = source[idx]
+            N = 128
+            source = source[:N]
+            perturbation_id = perturbation_id[:N]
             
-            pred_expression = generate_sample(wrapped_vf,source[i:i+batch_size],batch_perturbation_id,vf,gene_ids=gene_ids_test,gene_all=gene_ids_test)
-            pred_expressions.append(pred_expression)
-            
-        pred_expressions = torch.cat(pred_expressions, dim=0).cpu().numpy()
-        all_pred_expressions.append(pred_expressions)
-        all_target_expressions.append(target)
-        obs_perturbation_name_pred.extend([perturbation_name] * pred_expressions.shape[0])
-        obs_perturbation_name_real.extend([perturbation_name] * target.shape[0])
-        # count += 1
-        # if count > 3:
-        #     break
+            pred_expressions = []
+            for i in trange(0, N, batch_size):
+                batch_perturbation_id = perturbation_id[i:i+batch_size]
+                
+                batch_perturbation_id = batch_perturbation_id.to(accelerator.device)
+                
+                pred_expression = generate_sample(wrapped_vf,source[i:i+batch_size],batch_perturbation_id,vf,gene_ids=gene_ids_test,gene_all=gene_ids_test)
+                pred_expressions.append(pred_expression)
+                
+            pred_expressions = torch.cat(pred_expressions, dim=0).cpu().numpy()
+            all_pred.append(pred_expressions)
+            all_tgt.append(target)
+            obs_p.extend([perturbation_name] * pred_expressions.shape[0])
+            obs_r.extend([perturbation_name] * target.shape[0])
 
-    all_pred_expressions = np.concatenate(all_pred_expressions, axis=0)
-    all_target_expressions = np.concatenate(all_target_expressions, axis=0)
-    obs_pred = pd.DataFrame({'perturbation':obs_perturbation_name_pred})
-    obs_real = pd.DataFrame({'perturbation':obs_perturbation_name_real})
-    pred = ad.AnnData(X=all_pred_expressions, obs=obs_pred)
-    real = ad.AnnData(X=all_target_expressions, obs=obs_real)
-    
+        all_pred_expressions = np.concatenate(all_pred, axis=0)
+        all_target_expressions = np.concatenate(all_tgt, axis=0)
+        obs_pred = pd.DataFrame({'perturbation':obs_p})
+        obs_real = pd.DataFrame({'perturbation':obs_r})
+        pred = ad.AnnData(X=all_pred_expressions, obs=obs_pred)
+        real = ad.AnnData(X=all_target_expressions, obs=obs_real)
+        
+        if accelerator.is_main_process:
+            evaluator = MetricsEvaluator(
+                adata_pred=pred,
+                adata_real=real,
+                control_pert="control",
+                pert_col="perturbation",
+                num_threads=32,
+            )
+            (results, agg_results) = evaluator.compute()
+            line_tag = L if L is not None else 'all'
+            results.write_csv(os.path.join(path, f'results_{line_tag}.csv'))
+            agg_results.write_csv(os.path.join(path, f'agg_results_{line_tag}.csv'))
+            pred.write_h5ad(os.path.join(path, f'pred_{line_tag}.h5ad'))
+            real.write_h5ad(os.path.join(path, f'real_{line_tag}.h5ad'))
+            per_line_scores.append((line_tag, pick_eval_score(agg_results, scheme)))
 
     eval_score = None
-    if accelerator.is_main_process:
-        evaluator = MetricsEvaluator(
-            adata_pred=pred,
-            adata_real=real,
-            control_pert="control",
-            pert_col="perturbation",
-            num_threads=32,
-        )
-        (results, agg_results) = evaluator.compute()
-        
-        results.write_csv(os.path.join(path, 'results.csv'))
-        agg_results.write_csv(os.path.join(path, 'agg_results.csv'))
-        pred.write_h5ad(os.path.join(path, 'pred.h5ad'))
-        real.write_h5ad(os.path.join(path, 'real.h5ad'))
-
-        eval_score = pick_eval_score(agg_results, scheme)
-        print(f"Current evaluation score: {eval_score:.4f}")
+    if accelerator.is_main_process and per_line_scores:
+        eval_score = float(np.mean([s for _, s in per_line_scores]))
+        for tag, s in per_line_scores:
+            print(f'eval[{tag}]: {scheme} = {s:.4f}')
+        print(f'eval mean over lines: {eval_score:.4f}')
     
     return eval_score
 
@@ -224,8 +227,7 @@ def wrapped_vf(target,t,source,perturbation_id,vf,gene_ids, gene_all):
 def generate_sample(wrapped_vf,source,condition_vec=None,vf=None,gene_ids=None,gene_all=None,steps=20,method="rk4"):
     
     noise_type = config.noise_type
-    if noise_type=="Gaussian" or getattr(config, 'data_space', 'log1p') in ('counts', 'cpm'):
-        # must match train_step's noise source: counts/cpm space -> Gaussian
+    if noise_type=="Gaussian":
         target_noise = torch.randn(source.shape[0],config.infer_top_gene,device=source.device)
     elif noise_type=="Poisson":
         target_noise = make_lognorm_poisson_noise(
@@ -267,13 +269,14 @@ if __name__ == "__main__":
     
     train_dataset = PerturbationDataset(train_sampler, config.batch_size)
     dataloader = DataLoader(train_dataset, batch_size=1, shuffle=False,num_workers=config.num_workers,pin_memory=True,persistent_workers=True)  # batch_size=1 因为每个getitem本身就是一个batch
-    if hasattr(config, 'coexpr_mask_fname'):
-        # vcc: per-space mask file (graph built from the space's own data)
-        mask_path = os.path.join(data_manager.data_path, data_manager.data_name, config.coexpr_mask_fname)
+    # data.py computes the (per-corpus / per-fold) mask path and exposes it;
+    # recomputing here would drift from the file actually built in process_data
+    if hasattr(data_manager, 'mask_path'):
+        mask_path = data_manager.mask_path
     elif config.use_negative_edge:
-        mask_path = os.path.join(data_manager.data_path, data_manager.data_name,'mask_fold_'+str(config.fold)+'topk_'+str(config.topk)+config.split_method+'_negative_edge'+'.pt')
+        mask_path = os.path.join(data_manager.data_path, data_manager.data_name, 'mask_fold_' + str(config.fold) + 'topk_' + str(config.topk) + config.split_method + '_negative_edge' + '.pt')
     else:
-        mask_path = os.path.join(data_manager.data_path, data_manager.data_name,'mask_fold_'+str(config.fold)+'topk_'+str(config.topk)+config.split_method+'.pt')
+        mask_path = os.path.join(data_manager.data_path, data_manager.data_name, 'mask_fold_' + str(config.fold) + 'topk_' + str(config.topk) + config.split_method + '.pt')
     vf = instantiate_model(config.model_type,
                            ntoken = config.ntoken,
                            d_model = config.d_model,

@@ -100,7 +100,14 @@ def load_checkpoint(checkpoint_path, model, optimizer, scheduler):
 def process_vocab(data_manager, config):
     # absolute path (robust to any cwd, e.g. dated run dirs on the remote)
     src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    vocab_path = os.path.join(src_dir, 'tokenizer', config.data_name + '_' + str(config.n_top_genes) + '_highly_vocab.json')
+    if getattr(config, 'data_name', '') == 'vcc':
+        # vocab is corpus-specific: key by corpus stem so switching the training
+        # corpus never reuses another corpus's gene set
+        stem = os.path.splitext(os.path.basename(str(config.corpus_path)))[0]
+        vocab_fname = f'{config.data_name}_{config.n_top_genes}_{stem}_highly_vocab.json'
+    else:
+        vocab_fname = config.data_name + '_' + str(config.n_top_genes) + '_highly_vocab.json'
+    vocab_path = os.path.join(src_dir, 'tokenizer', vocab_fname)
     if os.path.exists(vocab_path):
         print('##### loading vocab from file #####')
         vocab = GeneVocab.from_file(vocab_path)
