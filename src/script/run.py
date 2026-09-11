@@ -10,10 +10,8 @@ import random
 from src.data_process.data import Data, PerturbationDataset
 from src.flow_matching.ot import OTPlanSampler
 from src.flow_matching.path import AffineProbPath
-from src.flow_matching.solver import ODESolver
 from src.models.instantiate_model import instantiate_model
 from src.tokenizer.gene_tokenizer import GeneVocab
-from src.models.perturbation.moduls import PerturbationEmbedding
 import pdb
 import tqdm
 from src.flow_matching.path.scheduler import CondOTScheduler
