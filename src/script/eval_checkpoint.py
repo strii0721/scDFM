@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Evaluate a saved scDFM checkpoint on the holdout cell line (single GPU).
+"""Evaluate a saved scDFM checkpoint (single GPU), line-consistent.
 
-Reuses run.py's test() with its globals set. Usage:
+Reuses run.py's test() with its globals set. The test set is the held-out
+genes of split_method='single' (80/20 gene holdout); each (gene, cell line)
+pair is scored against its own line's control/target pools, then averaged
+over lines (see TestDataset.perturbation_line_pairs).
+
+Usage:
   python src/script/eval_checkpoint.py --checkpoint_path <checkpoint.pt> \
-      [same vcc data args as training] --max_test_perts 20 --out_dir <dir>
+      [same vcc data args as training] [--max_test_perts 20]
 """
 import os
 import sys
@@ -41,7 +46,7 @@ def main():
     _, valid_sampler, _ = data_manager.load_flow_data(batch_size=config.batch_size)
 
     # model + checkpoint (weights only)
-    mask_path = os.path.join(data_manager.data_path, data_manager.data_name, config.coexpr_mask_fname)
+    mask_path = data_manager.mask_path
     vf = instantiate_model(
         config.model_type, ntoken=config.ntoken, d_model=config.d_model,
         d_perturbation=config.d_model, fusion_method=config.fusion_method,
@@ -55,11 +60,11 @@ def main():
     # globals referenced by run.py's test()
     runner.inverse_dict = {v: str(k) for k, v in data_manager.perturbation_dict.items()}
 
-    out_dir = config.result_path
+    out_dir = os.path.join(os.path.dirname(config.checkpoint_path), 'eval')
     os.makedirs(out_dir, exist_ok=True)
     score = runner.test(valid_sampler, vf, accelerator, batch_size=config.batch_size,
-                        path=out_dir, vocab=vocab)
-    print(f"eval done, score={score}")
+                        path=out_dir, vocab=vocab, scheme='composite')
+    print(f"eval done, score={score} (line-consistent mean over lines)")
 
 
 if __name__ == "__main__":

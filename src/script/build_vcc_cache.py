@@ -7,7 +7,7 @@ ranks write the same h5ad on NFS -> h5py file-lock collision -> BlockingIOError
 once before torchrun; all ranks then only READ the artifacts.
 
 Usage (same tyro args as training):
-  python src/script/build_vcc_cache.py --data_name=vcc [--data_space=cpm]
+  python src/script/build_vcc_cache.py --data_name=vcc
 """
 import os
 import sys
@@ -33,8 +33,9 @@ def main():
     )
     # vocab: also written here so DDP ranks never race on the json file
     process_vocab(data_manager, config)
-    cache = os.path.join(config.data_path, config.data_name, config.processed_cache_fname)
-    mask = os.path.join(config.data_path, config.data_name, config.coexpr_mask_fname)
+    stem = os.path.splitext(os.path.basename(str(config.corpus_path)))[0]
+    cache = os.path.join(config.data_path, config.data_name, f'processed_n{config.n_top_genes}_{stem}.h5ad')
+    mask = data_manager.mask_path
     print(f'cache+mask+vocab ready: {cache} | {mask}')
 
 
