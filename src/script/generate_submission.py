@@ -64,8 +64,9 @@ def artifact_paths(config):
     if config.mask_fname:
         mask = os.path.join(cache_dir, config.mask_fname)
     else:
+        _neg = '_negative_edge' if config.use_negative_edge else ''
         mask = os.path.join(cache_dir,
-                            f'mask_fold_{config.fold}topk_{config.topk}{config.split_method}_{stem}.pt')
+                            f'mask_fold_{config.fold}topk_{config.topk}{config.split_method}{_neg}_{stem}.pt')
     vocab = os.path.join(src_dir, 'tokenizer',
                          f'{config.data_name}_{config.n_top_genes}_{stem}_highly_vocab.json')
     for p, what in [(cache, 'processed cache'), (mask, 'coexpression mask'), (vocab, 'vocab')]:

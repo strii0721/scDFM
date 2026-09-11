@@ -328,10 +328,12 @@ class Data:
         else:
             fold = 0
         if self.data_name == 'vcc' and cfg is not None:
-            # per-corpus mask file (graph built from this corpus's own train data)
+            # per-corpus mask file (graph built from this corpus's own train data);
+            # signed/unsigned graphs are different artifacts -> name must differ
             _stem = os.path.splitext(os.path.basename(str(cfg.corpus_path)))[0]
+            _neg = '_negative_edge' if use_negative_edge else ''
             mask_path = os.path.join(self.data_path, self.data_name,
-                                     f'mask_fold_{fold}topk_{k}{split_method}_{_stem}.pt')
+                                     f'mask_fold_{fold}topk_{k}{split_method}{_neg}_{_stem}.pt')
         elif use_negative_edge:
             mask_path = os.path.join(self.data_path, self.data_name,'mask_fold_'+str(fold)+'topk_'+str(k)+split_method+'_negative_edge'+'.pt')
         else:
