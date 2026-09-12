@@ -27,5 +27,5 @@ tail -n +2 "$CONTROLS_DIR/gene_names.csv" > "$GENE_CSV"
 DRY=""
 [ "${1:-}" = "--dry-run" ] && DRY="--dry-run"
 
-"$VCC_BIN" prep -i "$IN_H5AD" -g "$GENE_CSV" --perts "$CONTROLS_DIR/pert_counts.csv" -o "$OUT_VCC" $DRY
+"$VCC_BIN" prep -i "$IN_H5AD" -g "$GENE_CSV" --perts "$CONTROLS_DIR/pert_counts.csv" -o "$OUT_VCC" --force $DRY
 echo "done: $OUT_VCC"
