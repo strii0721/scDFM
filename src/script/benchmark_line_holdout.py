@@ -203,7 +203,10 @@ def main() -> None:
 
     user_agg = os.path.join(rdir, 'agg_results.csv')
     base_agg = os.path.join(bdir, 'baseline_agg.csv')
-    anchor = os.path.join(rdir, 'anchor_agg.parquet')
+    # --anchor 要传 anchor 所在目录（其内含 anchor_agg.parquet + anchor_meta.json sidecar），
+    # 传文件路径会报 "an anchor directory must carry its sidecar"
+    anchor_dir = rdir
+    anchor = os.path.join(anchor_dir, 'anchor_agg.parquet')
     if not os.path.exists(anchor):
         raise RuntimeError(
             f'anchor 缺失（{anchor}）：run --anchor 被拒，通常 = 该系真实数据 DE 功效不足，'
@@ -212,7 +215,7 @@ def main() -> None:
             f'或接受去掉 lfc_nmae 后单独评估其余 5 指标。')
     score_path = os.path.join(cfg.out_dir, 'scores.csv')
     _run_cli(['score', '--user-agg', user_agg, '--baseline-agg', base_agg,
-              '--anchor', anchor, '-o', score_path])
+              '--anchor', anchor_dir, '-o', score_path])
 
     scores = pd.read_csv(score_path)
     print('\n===== vcc2026 scaled scores (s=(u-b)/(r-b), 1 = replicate level) =====', flush=True)
