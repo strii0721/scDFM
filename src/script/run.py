@@ -26,9 +26,9 @@ from accelerate import Accelerator,DistributedDataParallelKwargs
 import torchdiffeq
 from tqdm import trange
 import numpy as np
-from cell_eval import MetricsEvaluator
 import anndata as ad
 import pandas as pd
+import sys
 from src.utils.utils import save_checkpoint, load_checkpoint, make_lognorm_poisson_noise, pick_eval_score, process_vocab, set_requires_grad_for_p_only, get_perturbation_emb
 
 ot_sampler = OTPlanSampler(method="exact") 
@@ -193,20 +193,25 @@ def test(data_sampler, vf, accelerator,  batch_size=128, path='./',vocab=None,sc
         real = ad.AnnData(X=all_target_expressions, obs=obs_real)
         
         if accelerator.is_main_process:
-            evaluator = MetricsEvaluator(
-                adata_pred=pred,
-                adata_real=real,
-                control_pert="control",
-                pert_col="perturbation",
-                num_threads=32,
-            )
-            (results, agg_results) = evaluator.compute()
             line_tag = L if L is not None else 'all'
-            results.write_csv(os.path.join(path, f'results_{line_tag}.csv'))
-            agg_results.write_csv(os.path.join(path, f'agg_results_{line_tag}.csv'))
             pred.write_h5ad(os.path.join(path, f'pred_{line_tag}.h5ad'))
             real.write_h5ad(os.path.join(path, f'real_{line_tag}.h5ad'))
-            per_line_scores.append((line_tag, pick_eval_score(agg_results, scheme)))
+            # 官方 vcc2026 六指标（cell-eval2 0.16 CLI，取代旧 cell_eval 2025 指标集；
+            # 旧包与 pdex>=0.3 不兼容已于 2026-09-14 弃用）。lognorm 输入 = log1p(CP10k)。
+            import subprocess
+            ce2_bin = os.path.join(os.path.dirname(sys.executable), 'cell-eval2')
+            rdir = os.path.join(path, f'ce2_{line_tag}')
+            subprocess.run(
+                [ce2_bin, 'run',
+                 '-ap', os.path.join(path, f'pred_{line_tag}.h5ad'),
+                 '-ar', os.path.join(path, f'real_{line_tag}.h5ad'),
+                 '--preset', 'vcc2026', '--input-type', 'lognorm',
+                 '--pert-col', 'perturbation', '--control', 'control',
+                 '--set', 'de.backend=pdex', '-o', rdir],
+                check=True,
+            )
+            agg = pd.read_csv(os.path.join(rdir, 'agg_results.csv'))
+            per_line_scores.append((line_tag, pick_eval_score(agg, scheme)))
 
     eval_score = None
     if accelerator.is_main_process and per_line_scores:

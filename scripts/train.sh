@@ -12,6 +12,9 @@
 # 产物: output/train/{YYYY-MM-DD_HH-MM}/iteration_N/checkpoint.pt（见 config.make_path，时间戳即实验名）
 set -euo pipefail
 export PYTHONPATH=.
+# 管道/非 tty 下 python stdout 默认 8KB 块缓冲 → tmux/日志看不到实时进度；
+# 置非缓冲（stderr 本就逐行落盘），训练打印（config dump/checkpoint/进度）即时可见
+export PYTHONUNBUFFERED=1
 
 GPUS="${GPUS:-8}"
 

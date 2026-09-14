@@ -16,33 +16,31 @@ def set_seed(seed):
     torch.cuda.manual_seed_all(seed)
     
 
-def pick_eval_score(agg_results, scheme):
-    df = agg_results.to_pandas()
+# 官方 vcc2026 六指标（cell-eval2 0.16 agg_results.csv：statistic 行 x metric 列）
+OFFICIAL_HIGHER = ["pds_cosine", "de_wilcoxon_direction_fidelity_yield_raw",
+                   "de_wilcoxon_direction_reach_raw", "de_wilcoxon_sig_jaccard"]
+OFFICIAL_LOWER = ["expr_mse_unbiased_capped_norm", "de_wilcoxon_lfc_nmae"]
 
-    if scheme in ["pearson_delta", "mse", "mae", "mse_delta"]:
-        return float(df[scheme].iloc[0])
 
-    if scheme == "reverse":
-        return float(df["pr_auc"].iloc[0])
-
-    if scheme == "forward":
-        pear = float(df["pearson_delta"].iloc[0])
-        mse  = float(df["mse_delta"].iloc[0])
-        alpha = 0.05 
-        return pear - alpha * mse
-
-    if scheme == "de":
-        keys = ["de_spearman_sig", "de_direction_match", "de_sig_genes_recall"]
-        return float(df[keys].iloc[0].mean())
-
-    if scheme == "composite":
-        pear = float(df["pearson_delta"].iloc[0])
-        mse  = float(df["mse_delta"].iloc[0])
-        pra  = float(df["pr_auc"].iloc[0])
-        de   = float(df[["de_spearman_sig","de_direction_match","de_sig_genes_recall"]].iloc[0].mean())
-        return 0.4*pra + 0.3*de + 0.3*(pear - 0.05*mse)
-
-    raise ValueError("unknown scheme")
+def pick_eval_score(agg_df, scheme="composite"):
+    """checkpoint 筛选用的官方六指标合成值（无 b/r 缩放，同一真实数据上跨 ckpt 可比）。
+    agg_df = cell-eval2 `run` 的 agg_results.csv（pandas wide：statistic 行 x metric 列）。
+    higher-better 取正、lower-better 取负，对可用指标求均值；全 NaN 返回 nan。
+    2026-09-14 起取代旧 cell_eval 2025 指标集（旧包与 pdex>=0.3 不兼容）。"""
+    if scheme != "composite":
+        raise ValueError(f"unknown scheme: {scheme} (official vcc2026 composite only)")
+    if hasattr(agg_df, "to_pandas"):          # 兼容旧调用（polars frame）
+        agg_df = agg_df.to_pandas()
+    mean_row = agg_df.set_index("statistic").loc["mean"]
+    signed = []
+    for m in OFFICIAL_HIGHER + OFFICIAL_LOWER:
+        if m not in mean_row.index:
+            continue
+        v = mean_row[m]
+        if pd.isna(v):
+            continue
+        signed.append(float(v) if m in OFFICIAL_HIGHER else -float(v))
+    return float(np.mean(signed)) if signed else float("nan")
 
 def make_lognorm_poisson_noise(target_log, alpha=1.0, per_cell_L=None, eps=1e-8):
     """
