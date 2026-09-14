@@ -268,10 +268,10 @@ class Data:
                     ad.settings.allow_write_nullable_strings = True
                 self.adata.write(cache)
                 print(f'##### vcc: processed cached to {cache} #####')
-            # 5) split: single-gene holdout — 80/20 panel-gene split x 5 folds
-            #    (upstream additive/unseen splits are combo-oriented; single-gene
-            #    CRISPRi needs its own. Held-out genes' cells + all control cells
-            #    form the test set, mirroring upstream's test|control pattern.)
+            # 5) split：默认 single_line（HCT116 留系，2026-09-14 取代五折）；
+            #    'single' = 80/20 panel 基因留出 x5 折（原方案，fold 选折）。
+            #    held-out 基因/系 cells + all control cells form the test set,
+            #    mirroring upstream's test|control pattern.
             if split_method == 'single':
                 tg_all = self.adata.obs['target_gene'].astype(str)
                 panel_genes = sorted(g for g in tg_all.unique() if g != 'non-targeting')

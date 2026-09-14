@@ -40,7 +40,10 @@ class FlowConfig:
     n_top_genes: int = 5000
     checkpoint_path: str = ''
     gamma: float = 0.5             # 论文 MMD λ=0.5
-    split_method: str = 'single'
+    # 默认 HCT116 留系（2026-09-14 取代原五折基因留出，用户定案）：
+    # train=剔除 HCT116 全部细胞，test=HCT116 扰动+对照（训练后 eval/benchmark 用）。
+    # 原方案仍可用 --split_method=single（80/20 panel 基因留出 x5 折，fold 参数选择折）。
+    split_method: str = 'single_line'
     use_mmd_loss: bool = True      # 论文带 MMD 分布正则（动态多核 RBF）
     fold: int = 0
     use_negative_edge: bool = True # 论文 kNN k=30 带符号相关（signed mask）
