@@ -58,6 +58,7 @@ class BenchConfig(FlowConfig):
     max_perts: int = 0         # 冒烟上限（0=全部）
     seed: int = 42
     de_backend: str = 'pdex'   # 无 gpudge 时显式 CPU DE 后端
+    allow_degenerate_baseline: bool = False  # baseline 锚点退化（如 lfc_nmae 显著集 <10 门控）时仍写出
     # 提交侧同款（generate_submission.GenConfig 亦有此二项）
     top_infer_genes: int = 1000
     ode_steps: int = 100
@@ -194,14 +195,21 @@ def main() -> None:
                   '--set', f'de.backend={cfg.de_backend}']
     bdir = os.path.join(cfg.out_dir, 'baseline')
     rdir = os.path.join(cfg.out_dir, 'run')
-    _run_cli(['baseline', '-ar', real_path, *base_flags, '-o', bdir])
+    base_cmd = ['baseline', '-ar', real_path, *base_flags, '-o', bdir]
+    if cfg.allow_degenerate_baseline:
+        base_cmd.append('--allow-degenerate-baseline')
+    _run_cli(base_cmd)
     _run_cli(['run', '-ap', pred_path, '-ar', real_path, *base_flags, '--anchor', '-o', rdir])
 
     user_agg = os.path.join(rdir, 'agg_results.csv')
     base_agg = os.path.join(bdir, 'baseline_agg.csv')
     anchor = os.path.join(rdir, 'anchor_agg.parquet')
-    for p, what in [(user_agg, 'run agg'), (base_agg, 'baseline agg'), (anchor, 'anchor')]:
-        assert os.path.exists(p), f'{what} missing: {p}'
+    if not os.path.exists(anchor):
+        raise RuntimeError(
+            f'anchor 缺失（{anchor}）：run --anchor 被拒，通常 = 该系真实数据 DE 功效不足，'
+            f'无一扰动在 5 折半拆分后通过 lfc_nmae 显著集 ≥10 门控（见 cell_eval2/anchor.py 报错）。'
+            f'无法计算复现锚点 r ⇒ 无官方同标度分数。可尝试：提高 min_real_cells/n_ctrl_cells、'
+            f'或接受去掉 lfc_nmae 后单独评估其余 5 指标。')
     score_path = os.path.join(cfg.out_dir, 'scores.csv')
     _run_cli(['score', '--user-agg', user_agg, '--baseline-agg', base_agg,
               '--anchor', anchor, '-o', score_path])
