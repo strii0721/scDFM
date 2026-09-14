@@ -192,6 +192,8 @@ def main():
         depths = np.asarray(src_raw.sum(axis=1)).ravel()
 
         src_modeled = torch.from_numpy(src_norm[:, modeled_idx].toarray()).float().to(device)
+        # 单槽扰动条件（方案B 2026-09-14）：encode 单个目标基因 → (B,1)，
+        # 与训练/eval（run.py crisper 分支）对齐；勿再加 'control' 填充槽
         pert_id_b = torch.tensor(vocab.encode([pert]), dtype=torch.long, device=device).repeat(1, 1)
 
         preds = []

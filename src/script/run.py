@@ -159,9 +159,10 @@ def test(data_sampler, vf, accelerator,  batch_size=128, path='./',vocab=None,sc
             source = control_data['src_cell_data'].to(device)
             perturbation_id = perturbation_id.to(device)
             if config.perturbation_function == 'crisper':
-                perturbation_name_crisper = [inverse_dict[int(p_id)] for p_id in perturbation_id[0].cpu().numpy()]
+                # 单槽扰动条件（方案B 2026-09-14）：与训练 loop 一致，只编码目标基因
+                perturbation_name_crisper = [inverse_dict[int(perturbation_id[0, 0].cpu().item())]]
                 perturbation_id = torch.tensor(vocab.encode(perturbation_name_crisper), dtype=torch.long, device=device)
-                perturbation_id = perturbation_id.repeat(source.shape[0],1)
+                perturbation_id = perturbation_id.repeat(source.shape[0], 1)
             
             idx = torch.randperm(source.shape[0])
             source = source[idx]
@@ -316,9 +317,12 @@ if __name__ == "__main__":
             target = batch_data['tgt_cell_data'].squeeze(0)
             perturbation_id = batch_data['condition_id'].squeeze(0).to(device)
             if config.perturbation_function == 'crisper':
-                perturbation_name = [inverse_dict[int(p_id)] for p_id in perturbation_id[0].cpu().numpy()]
+                # 单槽扰动条件（方案B 2026-09-14）：VCC 单基因任务，只编码 Drug1 目标基因，
+                # 不再拼接 'control' 填充槽（上游双基因组合设计的遗留）；
+                # 提交侧 generate_submission.py 本就是单槽 (B,1)，改后两侧对齐。
+                perturbation_name = [inverse_dict[int(perturbation_id[0, 0].cpu().item())]]
                 perturbation_id = torch.tensor(vocab.encode(perturbation_name), dtype=torch.long, device=device)
-                perturbation_id = perturbation_id.repeat(source.shape[0],1)
+                perturbation_id = perturbation_id.repeat(source.shape[0], 1)
             
             
             set_requires_grad_for_p_only(vf, p_only=config.mode)
