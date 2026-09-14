@@ -53,6 +53,7 @@ class FlowConfig:
     corpus_path: str = VCC_REMOTE_CORPUS_PATH
     panel_path: str = VCC_REMOTE_PANEL_PATH
     line_col: str = 'cell_line'
+    heldout_line: str = 'HCT116'  # split_method='single_line'（留一系）时整体留出的细胞系
     crispr_type_col: str = 'crispr_type'
     crispr_type_value: str = 'CRISPRi'
     mask_subsample: int = 50000  # cells for co-expression graph (0 = all)

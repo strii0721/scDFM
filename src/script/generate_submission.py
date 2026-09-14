@@ -114,6 +114,66 @@ def read_var_names(f: h5py.File):
     raise KeyError('could not read gene names from processed cache var')
 
 
+def select_modeled_genes(cache: str, panel_path: str, top_infer_genes: int,
+                         vocab: GeneVocab) -> list[str]:
+    """从 processed cache 选建模基因：top-N dispersions_norm + 全部 panel（去重、限 vocab）。"""
+    with h5py.File(cache, 'r') as f:
+        names = read_var_names(f)
+        disp = np.asarray(f['var']['dispersions_norm'][:])
+    rank = np.argsort(-disp)
+    panel = pd.read_csv(panel_path, header=None)[0].astype(str).tolist()
+    panel = [g for g in panel if g in set(names)]
+    top = [names[i] for i in rank[:top_infer_genes]]
+    modeled = [g for g in top if g not in set(panel)] + panel
+    modeled = [g for g in modeled if g in vocab]
+    return modeled
+
+
+def _ode_forward(vf, gene_ids, x, t, src_b, pid_b, device):
+    """模型前向包装：bf16 autocast，t 标量→device。"""
+    t_ = t.to(device)
+    with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+        return vf(gene_ids.repeat(x.shape[0], 1), x, t_, src_b, pid_b,
+                  gene_ids.repeat(x.shape[0], 1))
+
+
+def ode_predict(vf, gene_ids, src_modeled, pert_id_b, batch_size, ode_steps,
+                noise_type, poisson_alpha, poisson_target_sum, device):
+    """从控制谱生成扰动预测（log1p 空间）：噪声源与训练一致 → ODE t:0→1 → clamp≥0。"""
+    L = gene_ids.shape[0]
+    preds = []
+    with torch.no_grad():
+        for s in range(0, src_modeled.shape[0], batch_size):
+            src_b = src_modeled[s:s + batch_size].contiguous()
+            pid_b = pert_id_b.repeat(src_b.shape[0], 1)
+            if noise_type == 'Poisson':
+                noise = make_lognorm_poisson_noise(
+                    target_log=src_b, alpha=poisson_alpha, per_cell_L=poisson_target_sum)
+            else:
+                noise = torch.randn(src_b.shape[0], L, device=device)
+            traj = torchdiffeq.odeint(
+                lambda t, x: _ode_forward(vf, gene_ids, x, t, src_b, pid_b, device),
+                noise,
+                torch.linspace(0, 1, ode_steps, device=device),
+                atol=1e-4, rtol=1e-4, method='euler',
+            )
+            preds.append(torch.clamp(traj[-1], min=0).float())
+    return torch.cat(preds, dim=0)
+
+
+def log1p_bridge_to_counts(pred_modeled: np.ndarray, src_norm_full: np.ndarray,
+                           src_depths: np.ndarray, modeled_idx: np.ndarray,
+                           seed: int) -> np.ndarray:
+    """log1p 桥：建模基因<-模型、其余基因<-对照；expm1→按源细胞深度缩放→Poisson 计数。"""
+    full_log = src_norm_full.copy()
+    full_log[:, modeled_idx] = pred_modeled
+    lam = np.expm1(np.clip(full_log, 0, 60))
+    scale = src_depths / np.maximum(lam.sum(axis=1), 1.0)
+    lam = lam * scale[:, None]
+    counts = np.random.default_rng(seed).poisson(lam)
+    return counts.astype(np.int32)
+
+
 def main():
     import faulthandler
     import signal
@@ -129,15 +189,7 @@ def main():
     # 1) 只读缓存/词表/mask（与训练同名派生；缺文件报错，不生成）
     cache, mask_path, vocab_path = artifact_paths(config)
     vocab = GeneVocab.from_file(vocab_path)
-    with h5py.File(cache, 'r') as f:
-        names = read_var_names(f)
-        disp = np.asarray(f['var']['dispersions_norm'][:])
-    rank = np.argsort(-disp)
-    panel = pd.read_csv(config.panel_path, header=None)[0].astype(str).tolist()
-    panel = [g for g in panel if g in set(names)]
-    top = [names[i] for i in rank[:config.top_infer_genes]]
-    modeled = [g for g in top if g not in set(panel)] + panel
-    modeled = [g for g in modeled if g in vocab]
+    modeled = select_modeled_genes(cache, config.panel_path, config.top_infer_genes, vocab)
     print(f'modeled genes: {len(modeled)} ({config.top_infer_genes} HVG + panel)', flush=True)
 
     gene_ids = torch.tensor(vocab.encode(modeled), dtype=torch.long, device=device)
@@ -157,12 +209,6 @@ def main():
     gene_names_csv = os.path.join(config.controls_dir, 'gene_names.csv')
     official_genes = pd.read_csv(gene_names_csv)['gene_name'].astype(str).tolist()
     modeled_idx = np.array([official_genes.index(g) for g in modeled], dtype=np.int64)
-
-    def ode_forward(t, x, source_b, pert_id_b):
-        t_ = t.to(device)
-        with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-            return vf(gene_ids.repeat(x.shape[0], 1), x, t_, source_b, pert_id_b,
-                      gene_ids.repeat(x.shape[0], 1))
 
     # 4) generate per (context, pert)
     pairs = get_work_pairs(config)
@@ -196,37 +242,15 @@ def main():
         # 与训练/eval（run.py crisper 分支）对齐；勿再加 'control' 填充槽
         pert_id_b = torch.tensor(vocab.encode([pert]), dtype=torch.long, device=device).repeat(1, 1)
 
-        preds = []
-        with torch.no_grad():
-            for s in range(0, 400, config.batch_size):
-                src_b = src_modeled[s:s + config.batch_size].contiguous()
-                pid_b = pert_id_b.repeat(src_b.shape[0], 1)
-                # 噪声源与训练 train_step 一致（Gaussian/Poisson 二选一）
-                if config.noise_type == 'Poisson':
-                    noise = make_lognorm_poisson_noise(
-                        target_log=src_b,
-                        alpha=getattr(config, 'poisson_alpha', 0.8),
-                        per_cell_L=getattr(config, 'poisson_target_sum', 1e4),
-                    )
-                else:
-                    noise = torch.randn(src_b.shape[0], L, device=device)
-                traj = torchdiffeq.odeint(
-                    lambda t, x: ode_forward(t, x, src_b, pid_b),
-                    noise,
-                    torch.linspace(0, 1, config.ode_steps, device=device),
-                    atol=1e-4, rtol=1e-4, method='euler',
-                )
-                preds.append(torch.clamp(traj[-1], min=0).float())
-        pred_modeled = torch.cat(preds, dim=0).cpu().numpy()  # (400, L)
+        pred_modeled = ode_predict(
+            vf, gene_ids, src_modeled, pert_id_b, config.batch_size, config.ode_steps,
+            config.noise_type, getattr(config, 'poisson_alpha', 0.8),
+            getattr(config, 'poisson_target_sum', 1e4), device,
+        ).cpu().numpy()  # (400, L) log1p 空间
 
         # 5) full vector + counts（log1p 桥）
-        full_log = src_norm.toarray()                  # (400, 18533) 对照 log1p(CP10k)
-        full_log[:, modeled_idx] = pred_modeled        # 建模基因 <- 模型
-        lam = np.expm1(np.clip(full_log, 0, 60))       # 回 CP10k 线性标度
-        scale = depths / np.maximum(lam.sum(axis=1), 1.0)
-        lam = lam * scale[:, None]
-        counts = np.random.default_rng(stable_seed(ctx, pert, config.seed + 7)).poisson(lam)
-        counts = counts.astype(np.int32)
+        counts = log1p_bridge_to_counts(pred_modeled, src_norm.toarray(), depths,
+                                        modeled_idx, stable_seed(ctx, pert, config.seed + 7))
 
         out_rows.append(sparse.csr_matrix(counts))
         out_obs.append(pd.DataFrame({

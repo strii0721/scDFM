@@ -309,8 +309,26 @@ class Data:
                 # test-set HVG selection (infer_top_gene), upstream-style
                 sc.pp.highly_variable_genes(self.adata_test, inplace=True, n_top_genes=infer_top_gene)
                 self.adata_test = self.adata_test[:, self.adata_test.var['highly_variable']]
+            elif split_method == 'single_line':
+                # 留一系（2026-09-14）：train = 剔除 heldout_line 全部细胞；
+                # test = 该系全部细胞（扰动 + 对照），作本地官方 benchmark 的
+                # 真实参考。mask/vocab 都从 train 建（该系完全不可见）。
+                line_vals = self.adata.obs[cfg.line_col].astype(str).to_numpy()
+                is_held = line_vals == cfg.heldout_line
+                n_held = int(is_held.sum())
+                assert n_held > 0, f'heldout_line={cfg.heldout_line!r} not found in {cfg.line_col}'
+                self.adata.obs['mode'] = np.where(is_held, 'test', 'train')
+                self.adata.obs['Drug1'] = self.adata.obs['condition'].str.split('+').str[0]
+                self.adata.obs['Drug2'] = self.adata.obs['condition'].str.split('+').str[-1]
+                self.adata_train = self.adata[~is_held].copy()
+                self.adata_test = self.adata[is_held].copy()
+                print(f'##### vcc: single_line holdout {cfg.heldout_line}: train '
+                      f'{self.adata_train.n_obs} cells / test {self.adata_test.n_obs} cells #####')
+                # test-set HVG selection (infer_top_gene), upstream-style
+                sc.pp.highly_variable_genes(self.adata_test, inplace=True, n_top_genes=infer_top_gene)
+                self.adata_test = self.adata_test[:, self.adata_test.var['highly_variable']]
             else:
-                raise ValueError(f'vcc requires split_method="single", got {split_method!r}')
+                raise ValueError(f'vcc requires split_method="single" or "single_line", got {split_method!r}')
             condition = np.unique(list(self.adata.obs['condition']))
             unique_perturbation = []
             np.array([unique_perturbation.extend(perturbation.split('+')) for perturbation in condition])
