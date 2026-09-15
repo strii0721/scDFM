@@ -220,12 +220,17 @@ def main() -> None:
     # ---- eval_only：拼接 pred*.h5ad + real.h5ad，直接跑三件套 ----
     if cfg.eval_only:
         real = sc.read_h5ad(real_path)
-        parts = sorted(glob.glob(os.path.join(cfg.out_dir, 'pred*.h5ad')))
-        assert parts, f'no pred*.h5ad in {cfg.out_dir}'
+        parts = sorted(glob.glob(os.path.join(cfg.out_dir, 'pred_shard*.h5ad')))
+        assert parts, f'no pred_shard*.h5ad in {cfg.out_dir}'
         preds = [sc.read_h5ad(p) for p in parts]
         pred = ad.concat(preds, join='outer', index_unique=None)
-        print(f'eval_only: concat {len(parts)} parts -> {pred.shape[0]} cells x {pred.shape[1]} genes',
-              flush=True)
+        # 官方口径：pred 侧必须同样含对照类别（non-targeting）。对照本就不预测，
+        # 拷贝 real 的对照 counts 补齐，使两侧扰动集合一致（validate_pair 要求逐项相同）。
+        ctl_mask = real.obs['target_gene'].values == 'non-targeting'
+        ctl = real[ctl_mask].copy()
+        pred = ad.concat([pred, ctl], join='outer', index_unique=None)
+        print(f'eval_only: concat {len(parts)} shards + {ctl.shape[0]} ctl -> '
+              f'{pred.shape[0]} cells x {pred.shape[1]} genes', flush=True)
         _run_eval(cfg, real, pred)
         return
 
