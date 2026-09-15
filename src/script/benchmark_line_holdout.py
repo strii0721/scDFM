@@ -18,6 +18,7 @@ heldout_line（默认 HCT116）整体留出：
 注意：与生成/训练同源派生缓存（build_vcc_cache 产物）只读复用；
 单对 (pert,400 细胞) ODE 共租实测 ~2.4-3.5 min，全 300 基因是长任务（tmux 跑）。
 """
+import glob
 import os
 import subprocess
 import sys
@@ -63,6 +64,12 @@ class BenchConfig(FlowConfig):
     top_infer_genes: int = 1000
     ode_steps: int = 100
     mask_fname: str = ''  # artifact_paths 需要该字段（空=按 split_method/topk 派生）
+    # 多卡分片（2026-09-15：单卡串行 286 基因 ODE ~4min/基因太慢，8 卡分片）
+    perts: str = ''          # 逗号分隔基因子集；空=全部（配合 no_eval 空串=仅 prep real+perts.txt）
+    no_eval: bool = False    # 只构建 pred 不跑三件套（分片 worker）
+    eval_only: bool = False  # 跳过构建：拼接 out_dir/pred*.h5ad + real.h5ad 后跑三件套
+    pred_tag: str = ''       # 分片文件名后缀 -> pred_{tag}.h5ad
+    reuse_real: bool = False # real.h5ad 已存在则直接读，不重扫语料
 
 
 def _cli_bin() -> str:
@@ -161,35 +168,11 @@ def build_pred(cfg: BenchConfig, vf, gene_ids, vocab: GeneVocab, modeled: list[s
     return pred
 
 
-def main() -> None:
-    cfg = tyro.cli(BenchConfig, description=__doc__)
-    assert cfg.checkpoint_path and os.path.exists(cfg.checkpoint_path), 'checkpoint_path required'
-    assert cfg.out_dir, '--out_dir required'
-    os.makedirs(cfg.out_dir, exist_ok=True)
-
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    torch.manual_seed(cfg.seed)
-
-    cache, mask_path, vocab_path = artifact_paths(cfg)
-    vocab = GeneVocab.from_file(vocab_path)
-    modeled = select_modeled_genes(cache, cfg.panel_path, cfg.top_infer_genes, vocab)
-    gene_ids = torch.tensor(vocab.encode(modeled), dtype=torch.long, device=device)
-    print(f'modeled genes: {len(modeled)}', flush=True)
-
-    vf = instantiate_model(cfg.model_type, ntoken=cfg.ntoken, d_model=cfg.d_model,
-                           d_perturbation=cfg.d_model, fusion_method=cfg.fusion_method,
-                           perturbation_function=cfg.perturbation_function, mask_path=mask_path)
-    ckpt = torch.load(cfg.checkpoint_path, map_location='cpu')
-    vf.load_state_dict(ckpt['model_state_dict'])
-    vf = vf.to(device).eval()
-
-    real = build_real(cfg)
+def _run_eval(cfg: BenchConfig, real: ad.AnnData, pred: ad.AnnData) -> None:
+    """官方三件套：baseline（b）→ run --anchor（u + r 锚点）→ score（s=(u-b)/(r-b)）。"""
     real_path = os.path.join(cfg.out_dir, 'real.h5ad')
-    real.write_h5ad(real_path)
-
-    pred = build_pred(cfg, vf, gene_ids, vocab, modeled, real, device)
     pred_path = os.path.join(cfg.out_dir, 'pred.h5ad')
-    pred.write_h5ad(pred_path)
+    pred.write_h5ad(pred_path)  # eval_only 拼接体也落 canonical 名
 
     base_flags = ['--preset', 'vcc2026', '--input-type', 'counts',
                   '--pert-col', 'target_gene', '--control', 'non-targeting',
@@ -222,6 +205,74 @@ def main() -> None:
     print('\n===== vcc2026 scaled scores (s=(u-b)/(r-b), 1 = replicate level) =====', flush=True)
     print(scores.to_string(index=False), flush=True)
     print(f'\nartifacts in {cfg.out_dir}: real.h5ad pred.h5ad baseline/ run/ scores.csv', flush=True)
+
+
+def main() -> None:
+    cfg = tyro.cli(BenchConfig, description=__doc__)
+    assert cfg.checkpoint_path and os.path.exists(cfg.checkpoint_path), 'checkpoint_path required'
+    assert cfg.out_dir, '--out_dir required'
+    os.makedirs(cfg.out_dir, exist_ok=True)
+
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    torch.manual_seed(cfg.seed)
+    real_path = os.path.join(cfg.out_dir, 'real.h5ad')
+
+    # ---- eval_only：拼接 pred*.h5ad + real.h5ad，直接跑三件套 ----
+    if cfg.eval_only:
+        real = sc.read_h5ad(real_path)
+        parts = sorted(glob.glob(os.path.join(cfg.out_dir, 'pred*.h5ad')))
+        assert parts, f'no pred*.h5ad in {cfg.out_dir}'
+        preds = [sc.read_h5ad(p) for p in parts]
+        pred = ad.concat(preds, join='outer', index_unique=None)
+        print(f'eval_only: concat {len(parts)} parts -> {pred.shape[0]} cells x {pred.shape[1]} genes',
+              flush=True)
+        _run_eval(cfg, real, pred)
+        return
+
+    # ---- real 构建（分片 worker 复用已建好的 real.h5ad）----
+    if cfg.reuse_real and os.path.exists(real_path):
+        real = sc.read_h5ad(real_path)
+        print(f'reuse real.h5ad: {real.shape[0]} cells', flush=True)
+    else:
+        real = build_real(cfg)
+        real.write_h5ad(real_path)
+
+    # ---- prep 模式：只建 real + 写基因清单（不加载模型、不做预测）----
+    if cfg.no_eval and not cfg.perts:
+        tg = real.obs['target_gene'].astype(str).to_numpy()
+        perts = sorted(p for p in set(tg[tg != 'non-targeting']))
+        with open(os.path.join(cfg.out_dir, 'perts.txt'), 'w') as f:
+            f.write('\n'.join(perts) + '\n')
+        print(f'PREP_DONE: real={real.shape[0]} cells, {len(perts)} perts -> perts.txt', flush=True)
+        return
+
+    # ---- 分片子集：只保留本进程负责的扰动（+ 全部对照）----
+    if cfg.perts:
+        want = set(cfg.perts.split(','))
+        tg = real.obs['target_gene'].astype(str).to_numpy()
+        keep = (tg == 'non-targeting') | np.isin(tg, list(want))
+        real = real[keep].copy()
+
+    cache, mask_path, vocab_path = artifact_paths(cfg)
+    vocab = GeneVocab.from_file(vocab_path)
+    modeled = select_modeled_genes(cache, cfg.panel_path, cfg.top_infer_genes, vocab)
+    gene_ids = torch.tensor(vocab.encode(modeled), dtype=torch.long, device=device)
+    print(f'modeled genes: {len(modeled)}', flush=True)
+
+    vf = instantiate_model(cfg.model_type, ntoken=cfg.ntoken, d_model=cfg.d_model,
+                           d_perturbation=cfg.d_model, fusion_method=cfg.fusion_method,
+                           perturbation_function=cfg.perturbation_function, mask_path=mask_path)
+    ckpt = torch.load(cfg.checkpoint_path, map_location='cpu')
+    vf.load_state_dict(ckpt['model_state_dict'])
+    vf = vf.to(device).eval()
+
+    pred = build_pred(cfg, vf, gene_ids, vocab, modeled, real, device)
+    tag = f'_{cfg.pred_tag}' if cfg.pred_tag else ''
+    pred_path = os.path.join(cfg.out_dir, f'pred{tag}.h5ad')
+    pred.write_h5ad(pred_path)
+
+    if not cfg.no_eval:
+        _run_eval(cfg, real, pred)
 
 
 if __name__ == '__main__':
