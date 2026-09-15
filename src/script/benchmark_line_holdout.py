@@ -62,6 +62,7 @@ class BenchConfig(FlowConfig):
     # 提交侧同款（generate_submission.GenConfig 亦有此二项）
     top_infer_genes: int = 1000
     ode_steps: int = 100
+    mask_fname: str = ''  # artifact_paths 需要该字段（空=按 split_method/topk 派生）
 
 
 def _cli_bin() -> str:
