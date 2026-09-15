@@ -50,7 +50,7 @@ for s in $(seq 0 $((N_SHARDS - 1))); do
 done
 wait
 N_GOT=$(ls "$OUT"/pred_shard*.h5ad 2>/dev/null | wc -l)
-N_EXP=$((N_P + CHUNK - 1) / CHUNK)
+N_EXP=$(( (N_P + CHUNK - 1) / CHUNK ))
 if [ "$N_GOT" -lt "$N_EXP" ]; then
   echo "shard failure: $N_GOT/$N_EXP partials produced (see logs/bench_${TAG}_shard*.log)" >&2
   exit 1
