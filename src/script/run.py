@@ -284,6 +284,11 @@ if __name__ == "__main__":
             torch.distributed.init_process_group(
                 backend='nccl', init_method='env://',
                 timeout=datetime.timedelta(hours=2))
+        # 关键：首个 collective 强制 NCCL communicator 惰性创建完成（2026-09-17
+        # 两次实测：先到的 rank 在 prepare/DDP 的首个 collective 处向 store 取
+        # rank0 的 ncclUniqueId，600s 超时——rank0 还在读缓存没到 collective）。
+        # 在重活开始前 barrier，所有 rank 数秒内齐达，comm 一次建好。
+        torch.distributed.barrier()
     if accelerator.is_main_process:
         print(config)
         save_path = config.make_path()
