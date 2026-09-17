@@ -115,18 +115,26 @@ def read_var_names(f: h5py.File):
 
 
 def select_modeled_genes(cache: str, panel_path: str, top_infer_genes: int,
-                         vocab: GeneVocab) -> list[str]:
-    """从 processed cache 选建模基因（2026-09-17 用户定案口径）：先排除全部 panel，
-    按 dispersions_norm 取 top-N 非 panel 基因。panel 不建模——扰动靶基因的表达
-    由推理侧直接置 0（KD 语义，6 指标全部剔除靶基因）。"""
+                         vocab: GeneVocab, pool_path: str = '') -> list[str]:
+    """从 processed cache 选建模基因（2026-09-17 用户定案口径）：与训练侧同池——
+    先在 common_hvg（pool_path，空串=全轴）中排除全部 panel，按 dispersions_norm
+    取 top-N 非 panel 基因。panel 不建模——扰动靶基因的表达由推理侧直接置 0
+    （KD 语义，6 指标全部剔除靶基因）。"""
     with h5py.File(cache, 'r') as f:
         names = read_var_names(f)
         disp = np.asarray(f['var']['dispersions_norm'][:])
-    rank = np.argsort(-disp)
+    name_set = set(names)
+    pool: set | None = None
+    if pool_path:
+        pool = set(pd.read_csv(pool_path)['gene_name'].astype(str).tolist())
+        pool &= name_set  # ∩ 语料 var
+        assert pool, f'pool_path={pool_path!r} yields no usable genes'
     panel = pd.read_csv(panel_path, header=None)[0].astype(str).tolist()
-    panel = [g for g in panel if g in set(names)]
-    panel_set = set(panel)
-    top = [names[i] for i in rank if names[i] not in panel_set][:top_infer_genes]
+    panel_set = set(g for g in panel if g in name_set)
+    rank = np.argsort(-disp)
+    cands = [names[i] for i in rank
+             if (pool is None or names[i] in pool) and names[i] not in panel_set]
+    top = cands[:top_infer_genes]
     modeled = [g for g in top if g in vocab]
     return modeled
 
@@ -197,9 +205,10 @@ def main():
     # 1) 只读缓存/词表/mask（与训练同名派生；缺文件报错，不生成）
     cache, mask_path, vocab_path = artifact_paths(config)
     vocab = GeneVocab.from_file(vocab_path)
-    modeled = select_modeled_genes(cache, config.panel_path, config.top_infer_genes, vocab)
-    print(f'modeled genes: {len(modeled)} (top-{config.top_infer_genes} non-panel HVG; '
-          f'panel targets zeroed at inference)', flush=True)
+    modeled = select_modeled_genes(cache, config.panel_path, config.top_infer_genes,
+                                   vocab, pool_path=config.train_pool_path)
+    print(f'modeled genes: {len(modeled)} (top-{config.top_infer_genes} by dispersion '
+          f'within common_hvg − panel; panel targets zeroed at inference)', flush=True)
 
     gene_ids = torch.tensor(vocab.encode(modeled), dtype=torch.long, device=device)
     L = len(modeled)

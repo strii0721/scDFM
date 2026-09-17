@@ -275,7 +275,8 @@ def main() -> None:
 
     cache, mask_path, vocab_path = artifact_paths(cfg)
     vocab = GeneVocab.from_file(vocab_path)
-    modeled = select_modeled_genes(cache, cfg.panel_path, cfg.top_infer_genes, vocab)
+    modeled = select_modeled_genes(cache, cfg.panel_path, cfg.top_infer_genes, vocab,
+                                   pool_path=cfg.train_pool_path)
     gene_ids = torch.tensor(vocab.encode(modeled), dtype=torch.long, device=device)
     print(f'modeled genes: {len(modeled)}', flush=True)
 
