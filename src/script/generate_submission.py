@@ -116,15 +116,18 @@ def read_var_names(f: h5py.File):
 
 def select_modeled_genes(cache: str, panel_path: str, top_infer_genes: int,
                          vocab: GeneVocab) -> list[str]:
-    """从 processed cache 选建模基因：top-N dispersions_norm + 全部 panel（去重、限 vocab）。"""
+    """从 processed cache 选建模基因（2026-09-17 用户定案口径）：先排除全部 panel，
+    按 dispersions_norm 取 top-N 非 panel 基因，再强制并入全部 panel（限 vocab）。
+    即 modeled = top-N(非 panel) + panel，panel 不占 top-N 名额。"""
     with h5py.File(cache, 'r') as f:
         names = read_var_names(f)
         disp = np.asarray(f['var']['dispersions_norm'][:])
     rank = np.argsort(-disp)
     panel = pd.read_csv(panel_path, header=None)[0].astype(str).tolist()
     panel = [g for g in panel if g in set(names)]
-    top = [names[i] for i in rank[:top_infer_genes]]
-    modeled = [g for g in top if g not in set(panel)] + panel
+    panel_set = set(panel)
+    top = [names[i] for i in rank if names[i] not in panel_set][:top_infer_genes]
+    modeled = top + panel
     modeled = [g for g in modeled if g in vocab]
     return modeled
 

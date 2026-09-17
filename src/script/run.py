@@ -34,6 +34,12 @@ from src.utils.utils import save_checkpoint, load_checkpoint, make_lognorm_poiss
 ot_sampler = OTPlanSampler(method="exact") 
 path = AffineProbPath(scheduler=CondOTScheduler())
 
+# 训练每步基因选择状态（main() 初始化，train_step 读取）：
+# 2026-09-17 用户定案——先排除 300 panel 列随机抽 L=infer_top_gene，
+# 再强制并入全部 panel 列；实际注意力窗口 = L + |panel|。
+_panel_col_idx: torch.Tensor | None = None   # 强制并入的 panel 列位置
+_non_panel_idx: torch.Tensor | None = None   # 随机抽样池（非 panel 列位置）
+
 def gaussian_kernel(x, y, sigma=1.0):
     beta = 1.0 / (2.0 * sigma**2)
     dist = torch.cdist(x, y, p=2) ** 2
@@ -85,7 +91,13 @@ def train_step(source, target, perturbation_id, vf, criterion, accelerator, nois
     B = source.shape[0]
     device = accelerator.device
     
-    input_gene_ids = torch.randperm(source.shape[-1], device=device)[:config.infer_top_gene]
+    # 2026-09-17 用户定案：先排除 300 panel 列随机抽 L=infer_top_gene，
+    # 再强制并入全部 panel 列（窗口 = L + |panel|，无重复）
+    assert _non_panel_idx is not None and _panel_col_idx is not None, \
+        'panel gene indices not initialized (main() sets them before training)'
+    n_rand = min(config.infer_top_gene, _non_panel_idx.shape[0])
+    rand = torch.randperm(_non_panel_idx.shape[0], device=device)[:n_rand]
+    input_gene_ids = torch.cat([_non_panel_idx[rand], _panel_col_idx])
     source = source[:,input_gene_ids]
     target = target[:,input_gene_ids]
     gene = gene_ids.repeat(B,1).to(device)
@@ -299,6 +311,20 @@ if __name__ == "__main__":
     gene_ids = vocab.encode(list(data_manager.adata.var_names))
     
     gene_ids = torch.tensor(gene_ids, dtype=torch.long, device=device)
+
+    # 训练每步基因选择的 panel 列索引（2026-09-17 用户定案）：
+    # panel = pert_counts.csv ∩ 语料 var（与 data.py 同口径过滤）；
+    # train_step 先排除这些列随机抽 L，再强制并入全部 panel 列。
+    panel_raw = pd.read_csv(config.panel_path, header=None)[0].astype(str).tolist()
+    panel_genes = [g for g in panel_raw if g in set(data_manager.adata.var_names)]
+    panel_ids = set(vocab.encode(panel_genes))
+    panel_mask = torch.tensor([int(g) in panel_ids for g in gene_ids.tolist()],
+                              dtype=torch.bool, device=device)
+    _panel_col_idx = torch.nonzero(panel_mask, as_tuple=False).squeeze(-1)
+    _non_panel_idx = torch.nonzero(~panel_mask, as_tuple=False).squeeze(-1)
+    print(f'##### panel forcing: {_panel_col_idx.shape[0]} panel cols + L={config.infer_top_gene} '
+          f'random cols per step (attention window '
+          f'{config.infer_top_gene + _panel_col_idx.shape[0]}) #####', flush=True)
     
     save_path = config.make_path()
     best_loss = float('inf')
