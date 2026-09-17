@@ -138,8 +138,11 @@ def build_pred(cfg: BenchConfig, vf, gene_ids, vocab: GeneVocab, modeled: list[s
     ctl_norm = _norm_log1p(ctl_raw)                # log1p(CP10k)
 
     gene_axis_pos = {g: i for i, g in enumerate(real.var_names)}
-    # 对照子矩阵的列轴 = 全 18,533 官方轴（real 未做过列过滤）
+    # 对照子矩阵的列轴 = 全轴（real 未做过列过滤）
     modeled_pos_full = np.array([gene_axis_pos[g] for g in modeled], dtype=np.int64)
+    assert all(p in gene_axis_pos for p in
+               set(real.obs['target_gene'].astype(str)) - {'non-targeting'}), \
+        'perturbation target gene missing from real var axis (zero-target invariant broken)'
 
     perts = sorted(p for p in real.obs['target_gene'].astype(str).unique() if p != 'non-targeting')
     rng = np.random.default_rng(cfg.seed)
@@ -160,8 +163,11 @@ def build_pred(cfg: BenchConfig, vf, gene_ids, vocab: GeneVocab, modeled: list[s
             getattr(cfg, 'poisson_target_sum', 1e4), device,
         ).cpu().numpy()
 
+        # 靶基因列置 0（KD 语义，2026-09-17 定案；bridge 内 expm1 前置 0，
+        # 空出的 UMI 预算按组成性重新分配给其他基因）
         counts = log1p_bridge_to_counts(pred_modeled, src_norm.toarray(), depths,
-                                        modeled_pos_full, stable_seed(cfg.heldout_line, pert, cfg.seed + 7))
+                                        modeled_pos_full, stable_seed(cfg.heldout_line, pert, cfg.seed + 7),
+                                        zero_idx=np.array([gene_axis_pos[pert]], dtype=np.int64))
         rows.append(sparse.csr_matrix(counts))
         obs_rows.append(pd.DataFrame({'target_gene': [pert] * counts.shape[0],
                                       'context': [cfg.heldout_line] * counts.shape[0],

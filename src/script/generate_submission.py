@@ -117,8 +117,8 @@ def read_var_names(f: h5py.File):
 def select_modeled_genes(cache: str, panel_path: str, top_infer_genes: int,
                          vocab: GeneVocab) -> list[str]:
     """从 processed cache 选建模基因（2026-09-17 用户定案口径）：先排除全部 panel，
-    按 dispersions_norm 取 top-N 非 panel 基因，再强制并入全部 panel（限 vocab）。
-    即 modeled = top-N(非 panel) + panel，panel 不占 top-N 名额。"""
+    按 dispersions_norm 取 top-N 非 panel 基因。panel 不建模——扰动靶基因的表达
+    由推理侧直接置 0（KD 语义，6 指标全部剔除靶基因）。"""
     with h5py.File(cache, 'r') as f:
         names = read_var_names(f)
         disp = np.asarray(f['var']['dispersions_norm'][:])
@@ -127,8 +127,7 @@ def select_modeled_genes(cache: str, panel_path: str, top_infer_genes: int,
     panel = [g for g in panel if g in set(names)]
     panel_set = set(panel)
     top = [names[i] for i in rank if names[i] not in panel_set][:top_infer_genes]
-    modeled = top + panel
-    modeled = [g for g in modeled if g in vocab]
+    modeled = [g for g in top if g in vocab]
     return modeled
 
 
@@ -166,10 +165,16 @@ def ode_predict(vf, gene_ids, src_modeled, pert_id_b, batch_size, ode_steps,
 
 def log1p_bridge_to_counts(pred_modeled: np.ndarray, src_norm_full: np.ndarray,
                            src_depths: np.ndarray, modeled_idx: np.ndarray,
-                           seed: int) -> np.ndarray:
-    """log1p 桥：建模基因<-模型、其余基因<-对照；expm1→按源细胞深度缩放→Poisson 计数。"""
+                           seed: int, zero_idx: np.ndarray | None = None) -> np.ndarray:
+    """log1p 桥：建模基因<-模型、其余基因<-对照；expm1→按源细胞深度缩放→Poisson 计数。
+
+    zero_idx（可选）：overwrite 之后、expm1/缩放之前置 0 的列——扰动靶基因（KD 语义，
+    直接输出 0）。先置 0 再缩放 ⇒ 靶基因空出的 UMI 预算按组成性重新分配给其他基因
+    （符合文库总量固定的真实测序语义），而不是让每个预测细胞总 UMI 缩水。"""
     full_log = src_norm_full.copy()
     full_log[:, modeled_idx] = pred_modeled
+    if zero_idx is not None:
+        full_log[:, zero_idx] = 0.0
     lam = np.expm1(np.clip(full_log, 0, 60))
     scale = src_depths / np.maximum(lam.sum(axis=1), 1.0)
     lam = lam * scale[:, None]
@@ -193,7 +198,8 @@ def main():
     cache, mask_path, vocab_path = artifact_paths(config)
     vocab = GeneVocab.from_file(vocab_path)
     modeled = select_modeled_genes(cache, config.panel_path, config.top_infer_genes, vocab)
-    print(f'modeled genes: {len(modeled)} ({config.top_infer_genes} HVG + panel)', flush=True)
+    print(f'modeled genes: {len(modeled)} (top-{config.top_infer_genes} non-panel HVG; '
+          f'panel targets zeroed at inference)', flush=True)
 
     gene_ids = torch.tensor(vocab.encode(modeled), dtype=torch.long, device=device)
     L = len(modeled)
@@ -252,8 +258,10 @@ def main():
         ).cpu().numpy()  # (400, L) log1p 空间
 
         # 5) full vector + counts（log1p 桥）
+        # 靶基因列置 0（KD 语义，2026-09-17 定案）：official panel ⊆ 官方轴
         counts = log1p_bridge_to_counts(pred_modeled, src_norm.toarray(), depths,
-                                        modeled_idx, stable_seed(ctx, pert, config.seed + 7))
+                                        modeled_idx, stable_seed(ctx, pert, config.seed + 7),
+                                        zero_idx=np.array([official_genes.index(pert)], dtype=np.int64))
 
         out_rows.append(sparse.csr_matrix(counts))
         out_obs.append(pd.DataFrame({
