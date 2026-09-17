@@ -83,10 +83,19 @@ def _run_cli(args: list[str]) -> None:
 
 
 def build_real(cfg: BenchConfig) -> ad.AnnData:
-    """heldout_line 真实细胞：对照子采样 + 全部（≥min_real_cells 的）扰动，raw counts。"""
-    a = sc.read_h5ad(cfg.corpus_path, backed='r')
+    """heldout_line 真实细胞：对照子采样 + 全部（≥min_real_cells 的）扰动，raw counts。
+
+    test_corpus_path 非空（split_method='whole'，replogle 2026-09-17）：测试语料是
+    独立文件，整个文件即 heldout_line，不再按 line_col 过滤；
+    否则从训练语料中按 line_col == heldout_line 提取（原留一系口径）。
+    """
+    src_path = cfg.test_corpus_path or cfg.corpus_path
+    a = sc.read_h5ad(src_path, backed='r')
     obs = a.obs
-    line_mask = (obs[cfg.line_col].astype(str) == cfg.heldout_line).to_numpy()
+    if cfg.test_corpus_path:
+        line_mask = np.ones(a.n_obs, dtype=bool)  # 独立测试文件：全量即该系
+    else:
+        line_mask = (obs[cfg.line_col].astype(str) == cfg.heldout_line).to_numpy()
     tg = obs['target_gene'].astype(str).to_numpy()
     ctl_mask = line_mask & (tg == 'non-targeting')
     pert_mask = line_mask & (tg != 'non-targeting')

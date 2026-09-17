@@ -13,7 +13,12 @@ def instantiate_model(model_type: str, **kwargs):
             layers = 4
         else:
             layers = 8
-        return OriginModel(fusion_method=kwargs['fusion_method'], nlayers=layers, perturbation_function=kwargs['perturbation_function'],mask_path=kwargs['mask_path'])
+        # ntoken/d_model 必须透传（2026-09-17）：此前恒用 OriginModel 默认
+        # ntoken=6000，全轴 replogle vocab（11,923）会索引越界。
+        return OriginModel(ntoken=kwargs['ntoken'], d_model=kwargs['d_model'],
+                           fusion_method=kwargs['fusion_method'], nlayers=layers,
+                           perturbation_function=kwargs['perturbation_function'],
+                           mask_path=kwargs['mask_path'])
     else:
         raise ValueError(f"Invalid model type: {model_type}")
     

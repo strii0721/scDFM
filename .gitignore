@@ -229,3 +229,7 @@ cache/
 # 训练时生成的 vcc vocab（远程首跑 process_vocab 产物，本地不存在；
 # 若不加规则，sync.sh --delete 会误删远程文件）
 src/tokenizer/vcc_*_highly_vocab.json
+
+# replogle 训练缓存根（2026-09-17 起 data_path 从 cache/ 移到 tmp/；
+# 本地 tmp/ 同时放临时分析脚本，一律不入库不随 sync 传输）
+tmp/

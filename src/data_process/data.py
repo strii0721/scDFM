@@ -327,8 +327,21 @@ class Data:
                 # test-set HVG selection (infer_top_gene), upstream-style
                 sc.pp.highly_variable_genes(self.adata_test, inplace=True, n_top_genes=infer_top_gene)
                 self.adata_test = self.adata_test[:, self.adata_test.var['highly_variable']]
+            elif split_method == 'whole':
+                # 全文件训练（replogle 2026-09-17）：语料文件本身无留出；
+                # 测试语料 = 独立文件 config.test_corpus_path，由
+                # benchmark_line_holdout.py 直接读取（do_eval 必须 False）。
+                # adata_test 给零行空壳，兼容 TestDataset 构造（不用其方法）。
+                self.adata.obs['mode'] = 'train'
+                self.adata.obs['Drug1'] = self.adata.obs['condition'].str.split('+').str[0]
+                self.adata.obs['Drug2'] = self.adata.obs['condition'].str.split('+').str[-1]
+                self.adata_train = self.adata.copy()
+                self.adata_test = self.adata[0:0].copy()
+                print(f'##### vcc: whole-corpus split: train {self.adata_train.n_obs} cells '
+                      f'(no internal holdout; test file: {cfg.test_corpus_path}) #####')
             else:
-                raise ValueError(f'vcc requires split_method="single" or "single_line", got {split_method!r}')
+                raise ValueError(f'vcc requires split_method="single"/"single_line"/"whole", '
+                                 f'got {split_method!r}')
             condition = np.unique(list(self.adata.obs['condition']))
             unique_perturbation = []
             np.array([unique_perturbation.extend(perturbation.split('+')) for perturbation in condition])
