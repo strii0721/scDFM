@@ -63,10 +63,9 @@ class FlowConfig:
     topk: int = 30                 # 论文 k=30
 
     # VCC-2026 mode (data_name='vcc')
-    # data_path = 缓存/共表达图/split 产物根目录，相对项目根（每次在项目根运行）；
-    # 语料数据集本身走 corpus_path（绝对路径）。勿放 resources/（那是数据集目录）。
-    # 2026-09-17 起缓存根从 cache/ 移到 tmp/（用户新目录布局）。
-    data_path: str = 'tmp'
+    # data_path = 缓存/共表达图/split 产物根目录（绝对路径=远程 /ssd2 本地盘，
+    # 2026-09-17 因 /ssd1 NFS 98% 满迁出；语料数据集走 corpus_path）。
+    data_path: str = '/ssd2/ict2/tmp'
     corpus_path: str = REPLOGLE_TRAIN_PATH
     panel_path: str = REPLOGLE_PANEL_PATH
     test_corpus_path: str = REPLOGLE_TEST_PATH  # split_method='whole' 的独立测试语料（benchmark real 侧）
