@@ -6,6 +6,7 @@
 #   bash scripts/train.sh              # 默认 8 卡 DDP（torchrun）
 #   GPUS=1 bash scripts/train.sh       # 单卡
 #   STEPS=200 bash scripts/train.sh    # 覆盖步数
+#   TOP_INFER=2000 bash scripts/train.sh  # 训练每步建模基因数 L（默认 1000；不影响缓存/mask/vocab）
 # 训练超参/数据路径全部走 config/config_flow.py 默认值（VCC 主线已收口），
 # 这里只传运行态参数；其他覆盖直接追加 tyro 参数:
 #   bash scripts/train.sh --gamma=1.0 --max_test_perts=0
@@ -22,7 +23,11 @@ GPUS="${GPUS:-8}"
 BATCH_TOTAL="${BATCH_TOTAL:-96}"
 RANK_BATCH=$((BATCH_TOTAL / GPUS))
 
-ARGS=(--data_name=vcc --batch_size="$RANK_BATCH")
+# 训练每步建模基因数 L（train_step 从 batch 列随机抽 L 个做全注意力）。
+# 只影响训练算力与靶基因列的注意力覆盖；缓存/mask/vocab 派生不含该键，改值无需重建。
+TOP_INFER="${TOP_INFER:-1000}"
+
+ARGS=(--data_name=vcc --batch_size="$RANK_BATCH" --infer_top_gene="$TOP_INFER")
 [ -n "${STEPS:-}" ] && ARGS+=(--steps="$STEPS")
 [ -n "${PRINT_EVERY:-}" ] && ARGS+=(--print_every="$PRINT_EVERY")
 
