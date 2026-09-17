@@ -70,6 +70,7 @@ class FlowConfig:
     corpus_path: str = REPLOGLE_TRAIN_PATH
     panel_path: str = REPLOGLE_PANEL_PATH
     test_corpus_path: str = REPLOGLE_TEST_PATH  # split_method='whole' 的独立测试语料（benchmark real 侧）
+    train_pool_path: str = os.path.join(REPLOGLE_DATA_DIR, 'common_hvg.csv')  # 训练每步采样池（基因清单，表头 gene_name；∩ 语料 var − panel）；空串=全部非 panel 列
     line_col: str = 'context'   # replogle train 文件 context=K562/Jurkat/HepG2（obs 无 cell_line 列）
     heldout_line: str = 'RPE1'  # whole 切分下仅作 benchmark 的 context 标签
     crispr_type_col: str = ''   # replogle 文件无 crispr_type 列；留空直接跳过 CRISPRi 过滤

@@ -24,7 +24,9 @@ BATCH_TOTAL="${BATCH_TOTAL:-96}"
 RANK_BATCH=$((BATCH_TOTAL / GPUS))
 
 # 训练每步建模基因数 L（2026-09-17 定案：300 panel 列不进训练窗口，靶基因表达由
-# 推理侧置 0；每步从非 panel 池随机抽 L）。缓存/mask/vocab 派生不含该键，改值无需重建。
+# 推理侧置 0；每步从采样池随机抽 L——池默认 = config.train_pool_path 的 common_hvg
+# 清单（∩ 语料 var − panel），空串回退全部非 panel 列）。缓存/mask/vocab 派生不含
+# 该键与池路径，改值无需重建。
 TOP_INFER="${TOP_INFER:-1000}"
 
 ARGS=(--data_name=vcc --batch_size="$RANK_BATCH" --infer_top_gene="$TOP_INFER")
