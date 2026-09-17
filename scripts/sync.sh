@@ -28,6 +28,7 @@ RSYNC_OPTS=(
   --exclude=result/
   --exclude=output/
   --exclude=cache/
+  --exclude=logs/
   --exclude=.venv/
   # 逐目录应用 .gitignore 规则
   --filter=':- .gitignore'
