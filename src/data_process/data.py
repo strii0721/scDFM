@@ -33,7 +33,19 @@ class Data:
         elif data_name in ['combosciplex', ]:
             self.adata = sc.read_h5ad(os.path.join(self.data_path, data_name + '.h5ad'))
         elif data_name == 'vcc':
-            self.adata = sc.read_h5ad(self.config.corpus_path)
+            # 2026-09-17 内存优化：缓存存在时直接读缓存、跳过 19GB 语料解压读入
+            # （语料仅用于建缓存；缓存就绪后训练/预构建不再需要它）。
+            # process_data 的 vcc 分支凭 _loaded_from_cache 标记不再重复读。
+            cache = os.path.join(self.data_path, self.data_name,
+                                 f'processed_n{self.config.n_top_genes}_'
+                                 f'{os.path.splitext(os.path.basename(str(self.config.corpus_path)))[0]}.h5ad')
+            if os.path.exists(cache):
+                self.adata = sc.read_h5ad(cache)
+                self._loaded_from_cache = True
+                print(f'##### load_data: cache hit, corpus read skipped: {cache} #####')
+            else:
+                self.adata = sc.read_h5ad(self.config.corpus_path)
+                self._loaded_from_cache = False
         else:
             raise ValueError(data_name + ' is not a valid data name')
         
@@ -226,8 +238,11 @@ class Data:
             cache = os.path.join(self.data_path, self.data_name, f'processed_n{n_top_genes}_{corpus_stem}.h5ad')
             os.makedirs(os.path.dirname(cache), exist_ok=True)
             if os.path.exists(cache):
-                print(f'##### loading cached processed h5ad: {cache} #####')
-                self.adata = sc.read_h5ad(cache)
+                if getattr(self, '_loaded_from_cache', False):
+                    print(f'##### processed h5ad already loaded from cache: {cache} #####')
+                else:
+                    print(f'##### loading cached processed h5ad: {cache} #####')
+                    self.adata = sc.read_h5ad(cache)
             else:
                 # 1) CRISPRi only (drop CRISPR KO)
                 if cfg.crispr_type_col and cfg.crispr_type_col in self.adata.obs:
@@ -335,7 +350,9 @@ class Data:
                 self.adata.obs['mode'] = 'train'
                 self.adata.obs['Drug1'] = self.adata.obs['condition'].str.split('+').str[0]
                 self.adata.obs['Drug2'] = self.adata.obs['condition'].str.split('+').str[-1]
-                self.adata_train = self.adata.copy()
+                # 2026-09-17 内存优化：whole 无切片，直接共享引用（TrainSampler 只加
+                # obs 列、无 X 变异；copy() 会让每 rank 多持有一份 ~93GB 矩阵，8 rank 共爆内存）
+                self.adata_train = self.adata
                 self.adata_test = self.adata[0:0].copy()
                 print(f'##### vcc: whole-corpus split: train {self.adata_train.n_obs} cells '
                       f'(no internal holdout; test file: {cfg.test_corpus_path}) #####')
