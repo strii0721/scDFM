@@ -23,6 +23,7 @@ from src.data_process.utils import build_generated_anndata
 
 import json
 from accelerate import Accelerator,DistributedDataParallelKwargs
+import datetime
 import torchdiffeq
 from tqdm import trange
 import numpy as np
@@ -272,6 +273,17 @@ if __name__ == "__main__":
     accelerator = Accelerator(
         kwargs_handlers=[ddp_kwargs]
     )
+    # 2026-09-17：8 rank 启动路径（87GB 缓存读入 + TrainSampler 建池）耗时差可达
+    # 10+ 分钟，prepare() 时才 init process group 会触发 NCCL 600s 超时（实测
+    # rank2 等 rank0 的 ncclUniqueId 超时）。重活开始前先 rendezvous（各 rank
+    # spawn 后数秒内齐达）；accelerate prepare() 检测已初始化会跳过（state.py
+    # is_initialized 守卫）。timeout 放大到 2h 防后续 DDP 广播因最慢 rank 滞后超时。
+    if int(os.environ.get('WORLD_SIZE', '1')) > 1:
+        torch.cuda.set_device(int(os.environ.get('LOCAL_RANK', '0')))
+        if not torch.distributed.is_initialized():
+            torch.distributed.init_process_group(
+                backend='nccl', init_method='env://',
+                timeout=datetime.timedelta(hours=2))
     if accelerator.is_main_process:
         print(config)
         save_path = config.make_path()

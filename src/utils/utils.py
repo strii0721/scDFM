@@ -114,7 +114,20 @@ def process_vocab(data_manager, config):
         # Build from the train gene set directly (train var is already the
         # HVG+panel subset; filtering by the 'highly_variable' mask drops
         # forced-in panel genes whose metadata flag is stale).
-        vocab = GeneVocab(list(data_manager.adata_train.var_names), specials=['<pad>', '<cls>', '<mask>', 'control'])
+        # 2026-09-17：扰动条件编码需覆盖全部训练扰动基因名。HVG 会把零方差列
+        #（如仅他库轴表达的基因）剔出缓存——这些基因若本身是训练扰动靶，
+        # 其名字仍须在 vocab（否则 train_step encode 时 KeyError，实测 86 个）。
+        names = list(data_manager.adata_train.var_names)
+        obs = data_manager.adata_train.obs
+        if 'target_gene' in obs.columns:
+            tg = obs['target_gene'].astype(str)
+            missing = sorted(g for g in tg.unique()
+                             if g != 'non-targeting' and g not in set(names))
+            if missing:
+                names = names + missing
+                print(f'##### vocab: appending {len(missing)} train perturbation '
+                      f'names missing from cache columns #####')
+        vocab = GeneVocab(names, specials=['<pad>', '<cls>', '<mask>', 'control'])
         vocab.save_json(vocab_path)
         vocab = GeneVocab.from_file(vocab_path)
     return vocab
