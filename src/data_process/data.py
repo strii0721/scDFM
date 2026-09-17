@@ -539,7 +539,15 @@ class TestDataset:
         self.data_name = data_name
         self.adata = adata
         self.perturbation_covariates = perturbation_covariates
-        self.adata.obs['perturbation_covariates'] = self.adata.obs[perturbation_covariates].apply(lambda x: '+'.join(x), axis=1)
+        # 空 DataFrame（whole 切分的零行测试空壳）上 apply(axis=1) 返回多列 DataFrame
+        # 而非 Series，赋值单列会 ValueError（2026-09-17 实测）——空表给空 Series。
+        # ⚠️ dtype 必须 object：str 扩展类型（StringDtype）的 unique() 返回 StringArray，
+        # 无 .sort() 方法，下一行会 AttributeError；非空路径 apply 产物也是 object。
+        pc = self.adata.obs[perturbation_covariates]
+        if pc.shape[0] == 0:
+            self.adata.obs['perturbation_covariates'] = pd.Series(index=pc.index, dtype=object)
+        else:
+            self.adata.obs['perturbation_covariates'] = pc.apply(lambda x: '+'.join(x), axis=1)
         self._perturbation_covariates = adata.obs['perturbation_covariates'].unique()
         
         self._perturbation_covariates = self._perturbation_covariates[self._perturbation_covariates != 'control+control']
