@@ -279,12 +279,14 @@ if __name__ == "__main__":
     # spawn 后数秒内齐达）；accelerate prepare() 检测已初始化会跳过（state.py
     # is_initialized 守卫）。timeout 放大到 2h 防后续 DDP 广播因最慢 rank 滞后超时。
     if int(os.environ.get('WORLD_SIZE', '1')) > 1:
-        torch.cuda.set_device(int(os.environ.get('LOCAL_RANK', '0')))
+        local_rank = int(os.environ.get('LOCAL_RANK', '0'))
+        torch.cuda.set_device(local_rank)
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group(
                 backend='nccl', init_method='env://',
-                timeout=datetime.timedelta(hours=2))
-        # 关键：首个 collective 强制 NCCL communicator 惰性创建完成（2026-09-17
+                timeout=datetime.timedelta(hours=2),
+                device_id=torch.device(f'cuda:{local_rank}'))
+        # 关键 1/2：首个 collective 强制 NCCL communicator 惰性创建完成（2026-09-17
         # 两次实测：先到的 rank 在 prepare/DDP 的首个 collective 处向 store 取
         # rank0 的 ncclUniqueId，600s 超时——rank0 还在读缓存没到 collective）。
         # 在重活开始前 barrier，所有 rank 数秒内齐达，comm 一次建好。
@@ -363,7 +365,13 @@ if __name__ == "__main__":
     
     if config.checkpoint_path != '':
         _, _ = load_checkpoint(config.checkpoint_path, vf, optimizer, scheduler)
-    start_iteration = 0 
+    start_iteration = 0
+    # 关键 2/2（2026-09-17 实测）：DDP 构造的 _verify_params_across_processes 用
+    # store 交换各 rank 参数数——rank 间加载差可达 37+ 分钟，先到的 rank 读到未
+    # 就绪 rank 的空槽（"Rank 2 has inconsistent 0 params"）直接报错。prepare 前
+    # 第二次 rendezvous：等最慢 rank 一起进 DDP。
+    if int(os.environ.get('WORLD_SIZE', '1')) > 1:
+        torch.distributed.barrier()
     vf = accelerator.prepare(vf)
     optimizer, scheduler, dataloader = accelerator.prepare(optimizer,scheduler,dataloader)
     inverse_dict = {v: str(k) for k, v in data_manager.perturbation_dict.items()}
