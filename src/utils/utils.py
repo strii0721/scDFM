@@ -102,7 +102,9 @@ def process_vocab(data_manager, config):
         # vocab is corpus-specific: key by corpus stem so switching the training
         # corpus never reuses another corpus's gene set
         stem = os.path.splitext(os.path.basename(str(config.corpus_path)))[0]
-        vocab_fname = f'{config.data_name}_{config.n_top_genes}_{stem}_highly_vocab.json'
+        pool_stem = (os.path.splitext(os.path.basename(str(config.train_pool_path)))[0]
+                     if config.train_pool_path else 'all')
+        vocab_fname = f'{config.data_name}_{config.n_top_genes}_{stem}_{pool_stem}_highly_vocab.json'
     else:
         vocab_fname = config.data_name + '_' + str(config.n_top_genes) + '_highly_vocab.json'
     vocab_path = os.path.join(src_dir, 'tokenizer', vocab_fname)
@@ -119,14 +121,20 @@ def process_vocab(data_manager, config):
         # 其名字仍须在 vocab（否则 train_step encode 时 KeyError，实测 86 个）。
         names = list(data_manager.adata_train.var_names)
         obs = data_manager.adata_train.obs
+        # 2026-09-17：扰动条件编码需覆盖全部训练扰动名 + 全部 panel 名。缓存列
+        # 裁剪（train_pool_path 清单）后这些名字可能不在 var_names 里，仍须可
+        # encode（否则 train_step/推理 encode 时 KeyError）。
+        extra = set()
         if 'target_gene' in obs.columns:
-            tg = obs['target_gene'].astype(str)
-            missing = sorted(g for g in tg.unique()
-                             if g != 'non-targeting' and g not in set(names))
-            if missing:
-                names = names + missing
-                print(f'##### vocab: appending {len(missing)} train perturbation '
-                      f'names missing from cache columns #####')
+            extra |= {g for g in obs['target_gene'].astype(str).unique()
+                      if g != 'non-targeting'}
+        panel = pd.read_csv(config.panel_path, header=None)[0].astype(str).tolist()
+        extra |= {g for g in panel if g != 'target_gene'}
+        missing = sorted(g for g in extra if g not in set(names))
+        if missing:
+            names = names + missing
+            print(f'##### vocab: appending {len(missing)} perturbation/panel names '
+                  f'missing from cache columns #####')
         vocab = GeneVocab(names, specials=['<pad>', '<cls>', '<mask>', 'control'])
         vocab.save_json(vocab_path)
         vocab = GeneVocab.from_file(vocab_path)

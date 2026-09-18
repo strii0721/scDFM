@@ -58,17 +58,19 @@ def corpus_stem(config) -> str:
 def artifact_paths(config):
     """与 data.py/process_vocab 完全一致的派生规则（只读）。"""
     stem = corpus_stem(config)
+    pool_stem = (os.path.splitext(os.path.basename(str(config.train_pool_path)))[0]
+                 if config.train_pool_path else 'all')
     src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # repo/src
     cache_dir = os.path.join(config.data_path, config.data_name)  # cache/vcc
-    cache = os.path.join(cache_dir, f'processed_n{config.n_top_genes}_{stem}.h5ad')
+    cache = os.path.join(cache_dir, f'processed_n{config.n_top_genes}_{stem}_{pool_stem}.h5ad')
     if config.mask_fname:
         mask = os.path.join(cache_dir, config.mask_fname)
     else:
         _neg = '_negative_edge' if config.use_negative_edge else ''
         mask = os.path.join(cache_dir,
-                            f'mask_fold_{config.fold}topk_{config.topk}{config.split_method}{_neg}_{stem}.pt')
+                            f'mask_fold_{config.fold}topk_{config.topk}{config.split_method}{_neg}_{stem}_{pool_stem}.pt')
     vocab = os.path.join(src_dir, 'tokenizer',
-                         f'{config.data_name}_{config.n_top_genes}_{stem}_highly_vocab.json')
+                         f'{config.data_name}_{config.n_top_genes}_{stem}_{pool_stem}_highly_vocab.json')
     for p, what in [(cache, 'processed cache'), (mask, 'coexpression mask'), (vocab, 'vocab')]:
         if not os.path.exists(p):
             raise FileNotFoundError(

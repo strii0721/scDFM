@@ -36,9 +36,12 @@ class Data:
             # 2026-09-17 内存优化：缓存存在时直接读缓存、跳过 19GB 语料解压读入
             # （语料仅用于建缓存；缓存就绪后训练/预构建不再需要它）。
             # process_data 的 vcc 分支凭 _loaded_from_cache 标记不再重复读。
+            pool_stem = (os.path.splitext(os.path.basename(str(self.config.train_pool_path)))[0]
+                         if self.config.train_pool_path else 'all')
             cache = os.path.join(self.data_path, self.data_name,
                                  f'processed_n{self.config.n_top_genes}_'
-                                 f'{os.path.splitext(os.path.basename(str(self.config.corpus_path)))[0]}.h5ad')
+                                 f'{os.path.splitext(os.path.basename(str(self.config.corpus_path)))[0]}'
+                                 f'_{pool_stem}.h5ad')
             if os.path.exists(cache):
                 self.adata = sc.read_h5ad(cache)
                 self._loaded_from_cache = True
@@ -235,7 +238,11 @@ class Data:
             cfg = self.config
             assert cfg is not None, 'vcc mode requires Data(config=...)'
             corpus_stem = os.path.splitext(os.path.basename(str(cfg.corpus_path)))[0]
-            cache = os.path.join(self.data_path, self.data_name, f'processed_n{n_top_genes}_{corpus_stem}.h5ad')
+            # 缓存键含采样池（2026-09-17：缓存列= train_pool_path 清单；换池须重建）
+            pool_stem = (os.path.splitext(os.path.basename(str(cfg.train_pool_path)))[0]
+                         if cfg.train_pool_path else 'all')
+            cache = os.path.join(self.data_path, self.data_name,
+                                 f'processed_n{n_top_genes}_{corpus_stem}_{pool_stem}.h5ad')
             os.makedirs(os.path.dirname(cache), exist_ok=True)
             if os.path.exists(cache):
                 if getattr(self, '_loaded_from_cache', False):
@@ -254,28 +261,22 @@ class Data:
                 is_ctl = tg == 'non-targeting'
                 self.adata.obs['condition'] = np.where(is_ctl, 'control', tg + '+control')
                 self.adata.obs['is_control'] = is_ctl
-                # 3) paper preprocessing: normalize_total(CP10k) -> log1p -> HVG
+                # 3) 列过滤（2026-09-17 用户定案）：缓存列 = train_pool_path 清单
+                #    （common_hvg）∩ 语料 var。训练窗口=common_hvg−panel 抽 L、
+                #    靶列推理置 0、扰动名由 vocab append 覆盖 → 全轴列无必要；
+                #    裁剪后缓存 87GB→~30GB、启动读盘与 rank 内存减半以上。
+                pool_raw = pd.read_csv(cfg.train_pool_path)['gene_name'].astype(str).tolist()
+                keep_cols = [g for g in pool_raw if g in set(self.adata.var_names)]
+                assert keep_cols, f'train_pool_path={cfg.train_pool_path!r} yields no usable genes'
+                self.adata = self.adata[:, keep_cols].copy()
+                print(f'##### vcc: cache columns filtered to {len(keep_cols)} genes '
+                      f'from {cfg.train_pool_path} #####')
+                # 4) paper preprocessing: normalize_total(CP10k) -> log1p（过滤后矩阵，快）
                 #    (log-space linear paths, upstream combosciplex path)
                 sc.pp.normalize_total(self.adata, target_sum=1e4)
                 sc.pp.log1p(self.adata)
-                # 4) HVG + force panel genes
-                panel_raw = pd.read_csv(cfg.panel_path, header=None)[0].astype(str).tolist()
-                # official pert_counts.csv has a 'target_gene' title row; separate junk rows
-                # from genuinely missing panel genes using var_names + corpus perturbations
-                known_genes = set(self.adata.var_names) | set(self.adata.obs['target_gene'].astype(str).unique())
-                panel = [g for g in panel_raw if g in self.adata.var_names]
-                junk = [g for g in panel_raw if g not in known_genes]
-                missing = [g for g in panel_raw if g in known_genes and g not in self.adata.var_names]
-                if junk:
-                    print(f'##### vcc: dropping {len(junk)} non-gene panel rows: {junk} #####')
-                if missing:
-                    print(f'##### vcc: {len(missing)} panel genes not in var_names: {missing} #####')
-                sc.pp.highly_variable_genes(self.adata, n_top_genes=n_top_genes)
-                hv = self.adata.var['highly_variable'].copy()
-                for g in panel:
-                    hv.loc[g] = True
-                self.adata.var['highly_variable'] = hv.to_numpy()
-                self.adata = self.adata[:, hv.to_numpy()].copy()
+                # 5) HVG 只算 dispersions_norm（推理 ranking 用），不裁列（n_top=全部列）
+                sc.pp.highly_variable_genes(self.adata, n_top_genes=self.adata.n_vars)
                 # obs/_index from the merged corpus reads back as a pandas
                 # StringArray; anndata <0.13 refuses to write nullable strings
                 # unless opted in (0.13+ default-on, setting may be removed)
@@ -379,9 +380,11 @@ class Data:
             # per-corpus mask file (graph built from this corpus's own train data);
             # signed/unsigned graphs are different artifacts -> name must differ
             _stem = os.path.splitext(os.path.basename(str(cfg.corpus_path)))[0]
+            _pool = (os.path.splitext(os.path.basename(str(cfg.train_pool_path)))[0]
+                     if cfg.train_pool_path else 'all')
             _neg = '_negative_edge' if use_negative_edge else ''
             mask_path = os.path.join(self.data_path, self.data_name,
-                                     f'mask_fold_{fold}topk_{k}{split_method}{_neg}_{_stem}.pt')
+                                     f'mask_fold_{fold}topk_{k}{split_method}{_neg}_{_stem}_{_pool}.pt')
         elif use_negative_edge:
             mask_path = os.path.join(self.data_path, self.data_name,'mask_fold_'+str(fold)+'topk_'+str(k)+split_method+'_negative_edge'+'.pt')
         else:

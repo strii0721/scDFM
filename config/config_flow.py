@@ -48,8 +48,9 @@ class FlowConfig:
     perturbation_fusion_method: str = 'sum' # mlp, sum
     fusion_method: str = 'differential_perceiver' # cross , concat, add
     infer_top_gene: int = 1000
-    # replogle 全轴缓存（2026-09-17）：HVG 不裁剪列，缓存=全部 11,919 列，
-    # 让每个扰动基因自己的列都保留在建模池（top_infer 仍只随机抽 1000 步）。
+    # 2026-09-17 起缓存列 = train_pool_path 清单（common_hvg）∩ 语料 var，
+    # 不再按 HVG n_top 裁剪（全轴 11,371 列缓存 87GB 无必要——训练窗口只在
+    # common_hvg−panel 抽 L、靶列推理置 0）。n_top_genes 仅作缓存/vocab 键组分。
     n_top_genes: int = 11919
     checkpoint_path: str = ''
     gamma: float = 0.5             # 论文 MMD λ=0.5
