@@ -73,8 +73,14 @@ class GeneEncoder(nn.Module):
         if use_perturbation_interaction:
             self.data_name = mask_path.split('/')[-2]
             self.perturbation_interaction = CrossAttentionTransformerLayer(embedding_dim, nhead, mlp_ratio=4.0, dropout=dropout)
-            self.mask_padded = torch.load(mask_path)
-            self.mask_num = self.mask_padded.shape[0]
+            _mask = torch.load(mask_path)
+            # 2026-09-17：vocab 追加的扰动/panel 名（非缓存列）id >= mask 行数——
+            # 扰动编码分支以 x[0] 作 mask 行索引会越界。附加一行全 False 的
+            # "开放行"（attention 语义 True=遮蔽 → 全 False=对全部缓存列可见，
+            # 对无共表达行的基因是中性先验）；forward 里 clamp 到该行。
+            _open = torch.zeros((1, _mask.shape[1]), dtype=_mask.dtype)
+            self.mask_padded = torch.cat([_mask, _open], dim=0)  # (mask_num+1, mask_num)
+            self.mask_num = self.mask_padded.shape[0] - 1
     def forward(self, x: Tensor) -> Tensor:
         if self.use_perturbation_interaction:
             # NOTE using the same perturbation and gene names
@@ -82,7 +88,7 @@ class GeneEncoder(nn.Module):
                 
                 self.mask_padded = self.mask_padded.to(x.device)
             
-            mask = self.mask_padded[x[0]]
+            mask = self.mask_padded[x[0].clamp(max=self.mask_num)]
             
         x = self.embedding(x)  # (batch, seq_len, embsize)
 
