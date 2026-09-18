@@ -2,7 +2,7 @@ import random
 import numpy as np
 import torch
 import os
-from src.tokenizer.gene_tokenizer import GeneVocab
+from src.tokenizer.gene_tokenizer import GeneVocab, Vocab
 from typing import Optional, Dict
 import numpy as np
 import pandas as pd
@@ -130,12 +130,18 @@ def process_vocab(data_manager, config):
                       if g != 'non-targeting'}
         panel = pd.read_csv(config.panel_path, header=None)[0].astype(str).tolist()
         extra |= {g for g in panel if g != 'target_gene'}
-        missing = sorted(g for g in extra if g not in set(names))
-        if missing:
-            names = names + missing
-            print(f'##### vocab: appending {len(missing)} perturbation/panel names '
-                  f'missing from cache columns #####')
-        vocab = GeneVocab(names, specials=['<pad>', '<cls>', '<mask>', 'control'])
+        extra = sorted(g for g in extra if g not in set(names))
+        # ⚠️ id 必须人工定序（2026-09-17 实测 IndexKernel OOB）：上游 builder 会把
+        # 全部词按字母序排、specials 置前（id 0..3），基因 id = 4 + 字母序 rank——
+        # 该 id 同时是共表达 mask 的行索引（mask = 4 pad 行 + 缓存列按字母序，
+        # 见 sorted_pad_mask）。append 的扰动名混入字母序会把缓存列 rank 顶出
+        # mask 行数。不变式：specials 0..3；缓存列字母序 4..n+3；追加名排最后
+        # （仅用于扰动条件编码，不进 mask 查询）。
+        ordered = ['<pad>', '<cls>', '<mask>', 'control'] + sorted(names) + extra
+        vocab = GeneVocab(Vocab({t: i for i, t in enumerate(ordered)}))
+        if extra:
+            print(f'##### vocab: {len(ordered)} tokens = 4 specials + {len(names)} '
+                  f'cache cols + {len(extra)} appended perturbation/panel names #####')
         vocab.save_json(vocab_path)
         vocab = GeneVocab.from_file(vocab_path)
     return vocab
