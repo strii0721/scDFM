@@ -55,6 +55,9 @@ class BenchConfig(FlowConfig):
     out_dir: str = ''
     n_ctrl_cells: int = 4000   # real 侧对照细胞数（DE 参考组；官方 context=18400，取子集控时长）
     n_pred_cells: int = 400    # 每扰动预测细胞数（官方 400）
+    n_real_cells: int = 100    # real 侧每扰动参考细胞数上限（2026-09-19 用户定案：
+    # 官方 400 在 RPE1 天然数据上不可行——panel 300 全 ≥101 恰好抽满 100；
+    # 不足 100 的基因用全部真实细胞）
     min_real_cells: int = 20   # real 侧每扰动最少细胞数（低于则跳过该基因）
     max_perts: int = 0         # 冒烟上限（0=全部）
     seed: int = 42
@@ -108,7 +111,18 @@ def build_real(cfg: BenchConfig) -> ad.AnnData:
     keep_perts = [p for p, c in zip(perts, counts) if c >= cfg.min_real_cells]
     if cfg.max_perts:
         keep_perts = keep_perts[:cfg.max_perts]
-    pert_idx = np.nonzero(pert_mask & np.isin(tg, list(keep_perts)))[0]
+
+    # 每扰动参考细胞数 = min(n_real_cells, 实际)（2026-09-19 用户定案：官方参考
+    # 400/基因，RPE1 天然数据多数基因不足；100 时 panel 300 个全部抽满）
+    sel_pert = []
+    n_capped = 0
+    for p in keep_perts:
+        idx_p = np.nonzero((tg == p) & pert_mask)[0]
+        n = min(cfg.n_real_cells, len(idx_p))
+        if n == cfg.n_real_cells:
+            n_capped += 1
+        sel_pert.append(np.sort(rng.choice(idx_p, size=n, replace=False)))
+    pert_idx = np.concatenate(sel_pert) if sel_pert else np.array([], dtype=int)
 
     real_mask = np.zeros(a.n_obs, dtype=bool)
     real_mask[ctl_sel] = True
@@ -117,7 +131,7 @@ def build_real(cfg: BenchConfig) -> ad.AnnData:
     real.obs['context'] = cfg.heldout_line
     real.obs['target'] = real.obs['target_gene'].astype(str)
     print(f'real: {real.shape[0]} cells = {len(ctl_sel)} ctl + {len(pert_idx)} pert '
-          f'({len(keep_perts)} genes)', flush=True)
+          f'({len(keep_perts)} genes, {n_capped} capped at {cfg.n_real_cells})', flush=True)
     return real
 
 
