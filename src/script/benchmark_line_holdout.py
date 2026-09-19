@@ -109,6 +109,11 @@ def build_real(cfg: BenchConfig) -> ad.AnnData:
 
     perts, counts = np.unique(tg[pert_mask], return_counts=True)
     keep_perts = [p for p, c in zip(perts, counts) if c >= cfg.min_real_cells]
+    # 基因范围收口到官方 panel 300（2026-09-19 用户定案：benchmark 只评 panel
+    # 扰动，与官方评测口径一致；语料里有而 panel 外的扰动不参与打分）
+    panel_raw = pd.read_csv(cfg.panel_path, header=None)[0].astype(str).tolist()
+    panel_set = {g for g in panel_raw if g != 'target_gene'}
+    keep_perts = [p for p in keep_perts if p in panel_set]
     if cfg.max_perts:
         keep_perts = keep_perts[:cfg.max_perts]
 
