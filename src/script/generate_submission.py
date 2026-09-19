@@ -141,12 +141,15 @@ def select_modeled_genes(cache: str, panel_path: str, top_infer_genes: int,
     return modeled
 
 
-def _ode_forward(vf, gene_ids, x, t, src_b, pid_b, device):
-    """模型前向包装：bf16 autocast，t 标量→device。"""
+def _ode_forward(vf, gene_ids, x, t, src_b, pid_b, device,
+                 gene_emb_c=None, value_emb_2_c=None, pert_emb_c=None):
+    """模型前向包装：bf16 autocast，t 标量→device。缓存项=t 无关量（ODE 步间复用）。"""
     t_ = t.to(device)
     with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
         return vf(gene_ids.repeat(x.shape[0], 1), x, t_, src_b, pid_b,
-                  gene_ids.repeat(x.shape[0], 1))
+                  gene_ids.repeat(x.shape[0], 1),
+                  gene_emb_cache=gene_emb_c, value_emb_2_cache=value_emb_2_c,
+                  perturbation_emb_cache=pert_emb_c)
 
 
 def ode_predict(vf, gene_ids, src_modeled, pert_id_b, batch_size, ode_steps,
@@ -163,8 +166,17 @@ def ode_predict(vf, gene_ids, src_modeled, pert_id_b, batch_size, ode_steps,
                     target_log=src_b, alpha=poisson_alpha, per_cell_L=poisson_target_sum)
             else:
                 noise = torch.randn(src_b.shape[0], L, device=device)
+            # 2026-09-19 加速：基因编码/对照值编码/扰动编码与 t 无关，在 ODE 的
+            # 100 个 Euler 步之间完全重复——每批只算一次（与逐步重算同算子同
+            # autocast，数值一致；仅推理路径，训练侧不受影响）。
+            gid_b = gene_ids.repeat(src_b.shape[0], 1)
+            with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                gene_emb_c = vf.encoder(gid_b)
+                value_emb_2_c = vf.value_encoder_2(src_b)
+                pert_emb_c = vf.encoder(pid_b).mean(1)
             traj = torchdiffeq.odeint(
-                lambda t, x: _ode_forward(vf, gene_ids, x, t, src_b, pid_b, device),
+                lambda t, x: _ode_forward(vf, gene_ids, x, t, src_b, pid_b, device,
+                                          gene_emb_c, value_emb_2_c, pert_emb_c),
                 noise,
                 torch.linspace(0, 1, ode_steps, device=device),
                 atol=1e-4, rtol=1e-4, method='euler',

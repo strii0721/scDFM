@@ -201,15 +201,22 @@ class model(nn.Module):
         
         return perturbation_emb
     
-    def forward(self,gene_id, cell_1, t, cell_2,  perturbation_id=None, gene_id_all=None, perturbation_emb=None, mode="predict_y"):
+    def forward(self,gene_id, cell_1, t, cell_2,  perturbation_id=None, gene_id_all=None, perturbation_emb=None, mode="predict_y",
+                gene_emb_cache=None, value_emb_2_cache=None, perturbation_emb_cache=None):
         if t.dim() == 0:
             t = t.repeat(cell_1.size(0))
         
-        gene_emb = self.encoder(gene_id)
+        if gene_emb_cache is not None:
+            gene_emb = gene_emb_cache
+        else:
+            gene_emb = self.encoder(gene_id)
         # gene_emb_all = self.encoder(gene_id_all)
         gene_emb_all = gene_emb
         value_emb_1 = self.value_encoder_1(cell_1)
-        value_emb_2 = self.value_encoder_2(cell_2)
+        if value_emb_2_cache is not None:
+            value_emb_2 = value_emb_2_cache
+        else:
+            value_emb_2 = self.value_encoder_2(cell_2)
         
         value_emb_1 = value_emb_1 + gene_emb
         value_emb_2 = value_emb_2 + gene_emb_all
@@ -221,7 +228,10 @@ class model(nn.Module):
 
         x = value_emb
 
-        perturbation_emb = self.get_perturbation_emb(perturbation_id, perturbation_emb, cell_1)
+        if perturbation_emb_cache is not None:
+            perturbation_emb = perturbation_emb_cache
+        else:
+            perturbation_emb = self.get_perturbation_emb(perturbation_id, perturbation_emb, cell_1)
 
         for i,block in enumerate(self.blocks):
             x = self.gene_adaLN[i](gene_emb, x)
