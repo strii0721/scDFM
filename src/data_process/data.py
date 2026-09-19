@@ -261,22 +261,34 @@ class Data:
                 is_ctl = tg == 'non-targeting'
                 self.adata.obs['condition'] = np.where(is_ctl, 'control', tg + '+control')
                 self.adata.obs['is_control'] = is_ctl
-                # 3) 列过滤（2026-09-17 用户定案）：缓存列 = train_pool_path 清单
-                #    （common_hvg）∩ 语料 var。训练窗口=common_hvg−panel 抽 L、
-                #    靶列推理置 0、扰动名由 vocab append 覆盖 → 全轴列无必要；
-                #    裁剪后缓存 87GB→~30GB、启动读盘与 rank 内存减半以上。
-                pool_raw = pd.read_csv(cfg.train_pool_path)['gene_name'].astype(str).tolist()
-                keep_cols = [g for g in pool_raw if g in set(self.adata.var_names)]
-                assert keep_cols, f'train_pool_path={cfg.train_pool_path!r} yields no usable genes'
-                self.adata = self.adata[:, keep_cols].copy()
-                print(f'##### vcc: cache columns filtered to {len(keep_cols)} genes '
-                      f'from {cfg.train_pool_path} #####')
+                # 3) 列过滤：train_pool_path 非空 = 清单（如 common_hvg）∩ 语料 var；
+                #    空串（2026-09-19 定案）= 整个基因轴，先全轴预处理、第 5 步 HVG
+                #    裁到 n_top_genes（11919 → 实质全部有 dispersion 的列）。
+                if cfg.train_pool_path:
+                    pool_raw = pd.read_csv(cfg.train_pool_path)['gene_name'].astype(str).tolist()
+                    keep_cols = [g for g in pool_raw if g in set(self.adata.var_names)]
+                    assert keep_cols, f'train_pool_path={cfg.train_pool_path!r} yields no usable genes'
+                    self.adata = self.adata[:, keep_cols].copy()
+                    print(f'##### vcc: cache columns filtered to {len(keep_cols)} genes '
+                          f'from {cfg.train_pool_path} #####')
+                else:
+                    print(f'##### vcc: full-axis cache (train_pool_path empty, '
+                          f'{self.adata.n_vars} genes before HVG) #####')
                 # 4) paper preprocessing: normalize_total(CP10k) -> log1p（过滤后矩阵，快）
                 #    (log-space linear paths, upstream combosciplex path)
                 sc.pp.normalize_total(self.adata, target_sum=1e4)
                 sc.pp.log1p(self.adata)
-                # 5) HVG 只算 dispersions_norm（推理 ranking 用），不裁列（n_top=全部列）
-                sc.pp.highly_variable_genes(self.adata, n_top_genes=self.adata.n_vars)
+                # 5) HVG：清单池时代 n_top=全部列只算 dispersions_norm（推理 ranking 用）
+                #    不裁列；全轴时代 n_top=n_top_genes（11919）实质保留全部有
+                #    dispersion 的列（零方差列 dispersion=NaN 永不入选）
+                sc.pp.highly_variable_genes(
+                    self.adata,
+                    n_top_genes=(self.adata.n_vars if cfg.train_pool_path else n_top_genes))
+                if not cfg.train_pool_path:
+                    hv = self.adata.var['highly_variable'].to_numpy()
+                    self.adata = self.adata[:, hv].copy()
+                    print(f'##### vcc: full-axis cache kept {int(hv.sum())}/{len(hv)} '
+                          f'genes (zero-variance dropped) #####')
                 # obs/_index from the merged corpus reads back as a pandas
                 # StringArray; anndata <0.13 refuses to write nullable strings
                 # unless opted in (0.13+ default-on, setting may be removed)
