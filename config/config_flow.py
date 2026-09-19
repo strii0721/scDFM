@@ -12,8 +12,8 @@ VCC_REMOTE_PANEL_PATH = os.path.join(VCC_REMOTE_CONTROLS_DIR, 'pert_counts.csv')
 
 # replogle train/test 语料（2026-09-17 起 scDFM 主线切到此组数据）：
 # train = K562+Jurkat+HepG2 全量；test = RPE1 独立文件（留系 benchmark 用）。
-# 两文件 var 轴一致 = /ssd2/ict2/datasets/replogle/gene_names.csv 的 11,919 基因。
-REPLOGLE_DATA_DIR = '/ssd2/ict2/datasets/replogle'
+# 两文件 var 轴一致 = /ssd1/ict2/Projects/vcc-2026/resources/datasets/replogle/gene_names.csv 的 11,919 基因。
+REPLOGLE_DATA_DIR = '/ssd1/ict2/Projects/vcc-2026/resources/datasets/replogle'
 REPLOGLE_TRAIN_PATH = os.path.join(REPLOGLE_DATA_DIR, 'replogle_k562_jurkat_hepg2.h5ad')
 REPLOGLE_TEST_PATH = os.path.join(REPLOGLE_DATA_DIR, 'replogle_rpe1.h5ad')
 REPLOGLE_PANEL_PATH = os.path.join(REPLOGLE_DATA_DIR, 'pert_counts.csv')
