@@ -202,6 +202,26 @@ def build_pred(cfg: BenchConfig, vf, gene_ids, vocab: GeneVocab, modeled: list[s
     return pred
 
 
+def _subsample_pred(pred: ad.AnnData, n: int, seed: int) -> ad.AnnData:
+    """每扰动预测细胞抽到 n 个（与 real 侧对齐，DE 功效对称）；对照行原样保留。
+
+    与直接生成 n 个统计等价：pred 的 400 个细胞是同一预测分布的独立样本，
+    抽子集 = 同一分布的另一组 n 个样本。400 全量仍留在 pred_shard*.h5ad。
+    """
+    rng = np.random.default_rng(seed)
+    tg = pred.obs['target_gene'].astype(str).to_numpy()
+    rows = []
+    for p in sorted(set(tg) - {'non-targeting'}):
+        idx = np.nonzero(tg == p)[0]
+        rows.append(np.sort(rng.choice(idx, size=min(n, len(idx)), replace=False)))
+    keep = np.concatenate(rows) if rows else np.array([], dtype=int)
+    ctl = np.nonzero(tg == 'non-targeting')[0]
+    out = pred[np.concatenate([keep, ctl])].copy()
+    print(f'eval subsample: {len(rows)} perts x cap {n} -> {len(keep)} pred cells '
+          f'+ {len(ctl)} ctl', flush=True)
+    return out
+
+
 def _run_eval(cfg: BenchConfig, real: ad.AnnData, pred: ad.AnnData) -> None:
     """官方三件套：baseline（b）→ run --anchor（u + r 锚点）→ score（s=(u-b)/(r-b)）。"""
     real_path = os.path.join(cfg.out_dir, 'real.h5ad')
@@ -265,6 +285,9 @@ def main() -> None:
         pred = ad.concat([pred, ctl], join='outer', index_unique=None)
         print(f'eval_only: concat {len(parts)} shards + {ctl.shape[0]} ctl -> '
               f'{pred.shape[0]} cells x {pred.shape[1]} genes', flush=True)
+        # 2026-09-19 用户定案：eval 前 pred 每扰动抽到 n_real_cells(100)，
+        # 与 real 侧 100 对齐（DE 检验功效对称），再进三件套
+        pred = _subsample_pred(pred, cfg.n_real_cells, cfg.seed)
         _run_eval(cfg, real, pred)
         return
 
