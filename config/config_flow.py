@@ -64,9 +64,10 @@ class FlowConfig:
     topk: int = 30                 # 论文 k=30
 
     # VCC-2026 mode (data_name='vcc')
-    # data_path = 缓存/共表达图/split 产物根目录（绝对路径=远程 /ssd2 本地盘，
-    # 2026-09-17 因 /ssd1 NFS 98% 满迁出；语料数据集走 corpus_path）。
-    data_path: str = '/ssd2/ict2/tmp'
+    # data_path = 缓存/共表达图/split 产物根目录。2026-09-19 用户定案：缓存放项目
+    # 文件夹下 /ssd1/ict2/Projects/scDFM/tmp（该路径经 /ssd1/ict2/Projects 软链接
+    # 实际落在 /ssd2 本地盘，/ssd1 NFS 98% 满不占 NFS；语料数据集走 corpus_path）。
+    data_path: str = '/ssd1/ict2/Projects/scDFM/tmp'
     corpus_path: str = REPLOGLE_TRAIN_PATH
     panel_path: str = REPLOGLE_PANEL_PATH
     test_corpus_path: str = REPLOGLE_TEST_PATH  # split_method='whole' 的独立测试语料（benchmark real 侧）
