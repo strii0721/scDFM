@@ -11,10 +11,10 @@
 #     /ssd1/ict2/Projects/vcc-2026/resources/datasets；cache=训练缓存
 #     （processed/mask/split 产物，相对项目根）；训练输出在远程本地盘生成，
 #     一律不随代码同步。
-# 远程目标: ict2@123.184.7.203:/ssd1/ict2/Projects/scDFM/
+# 远程目标: ict2@211.137.21.36:/ssd1/ict2/Projects/scDFM/（2026-09-20 IP 更换，原 123.184.7.203 作废）
 set -euo pipefail
 
-REMOTE_HOST="${REMOTE_HOST:-ict2@123.184.7.203}"
+REMOTE_HOST="${REMOTE_HOST:-ict2@211.137.21.36}"
 REMOTE_DIR="${REMOTE_DIR:-/ssd1/ict2/Projects/scDFM}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
