@@ -8,14 +8,14 @@
 # 排除规则: 显式排除（仓库约定大目录）+ .gitignore 逐目录规则。
 #   - .gitignore: 构建产物/缓存/__pycache__/venv/assets 等（rsync 逐目录合并）
 #   - data/result/output/cache/.git/.venv: 仓库约定 —— 语料在远程
-#     /ssd1/ict2/Projects/vcc-2026/resources/datasets；cache=训练缓存
+#     /home/ict2/Projects/vcc-2026/resources/datasets；cache=训练缓存
 #     （processed/mask/split 产物，相对项目根）；训练输出在远程本地盘生成，
 #     一律不随代码同步。
-# 远程目标: ict2@211.137.21.36:/ssd1/ict2/Projects/scDFM/（2026-09-20 IP 更换，原 123.184.7.203 作废）
+# 远程目标: ict2@211.137.21.36:/home/ict2/Projects/scDFM/（2026-09-20 IP 更换 + 项目迁家目录）
 set -euo pipefail
 
 REMOTE_HOST="${REMOTE_HOST:-ict2@211.137.21.36}"
-REMOTE_DIR="${REMOTE_DIR:-/ssd1/ict2/Projects/scDFM}"
+REMOTE_DIR="${REMOTE_DIR:-/home/ict2/Projects/scDFM}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 RSYNC_OPTS=(

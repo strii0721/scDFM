@@ -12,7 +12,7 @@ set -euo pipefail
 # vcc CLI: 非交互 shell（tmux/nohup）PATH 可能不含 ~/.local/bin，显式回退
 VCC_BIN="${VCC_BIN:-$(command -v vcc 2>/dev/null || echo "$HOME/.local/bin/vcc")}"
 
-CONTROLS_DIR="${CONTROLS_DIR:-/ssd1/ict2/Projects/vcc-2026/resources/datasets/controls}"
+CONTROLS_DIR="${CONTROLS_DIR:-/home/ict2/Projects/vcc-2026/resources/datasets/controls}"
 IN_H5AD="${IN_H5AD:-output/inference/prediction.h5ad}"
 OUT_VCC="${OUT_VCC:-output/inference/prediction.vcc}"
 

@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import os
 from datetime import datetime
 
-VCC_REMOTE_RESOURCE_ROOT = '/ssd1/ict2/Projects/vcc-2026/resources/datasets'
+VCC_REMOTE_RESOURCE_ROOT = '/home/ict2/Projects/vcc-2026/resources/datasets'
 VCC_REMOTE_CORPUS_PATH = os.path.join(
     VCC_REMOTE_RESOURCE_ROOT, 'train_merged', 'train_merged_panel.h5ad'
 )
@@ -12,8 +12,8 @@ VCC_REMOTE_PANEL_PATH = os.path.join(VCC_REMOTE_CONTROLS_DIR, 'pert_counts.csv')
 
 # replogle train/test 语料（2026-09-17 起 scDFM 主线切到此组数据）：
 # train = K562+Jurkat+HepG2 全量；test = RPE1 独立文件（留系 benchmark 用）。
-# 两文件 var 轴一致 = /ssd1/ict2/Projects/vcc-2026/resources/datasets/replogle/gene_names.csv 的 11,919 基因。
-REPLOGLE_DATA_DIR = '/ssd1/ict2/Projects/vcc-2026/resources/datasets/replogle'
+# 两文件 var 轴一致 = /home/ict2/Projects/vcc-2026/resources/datasets/replogle/gene_names.csv 的 11,919 基因。
+REPLOGLE_DATA_DIR = '/home/ict2/Projects/vcc-2026/resources/datasets/replogle'
 REPLOGLE_TRAIN_PATH = os.path.join(REPLOGLE_DATA_DIR, 'replogle_k562_jurkat_hepg2.h5ad')
 REPLOGLE_TEST_PATH = os.path.join(REPLOGLE_DATA_DIR, 'replogle_rpe1.h5ad')
 REPLOGLE_PANEL_PATH = os.path.join(REPLOGLE_DATA_DIR, 'pert_counts.csv')
@@ -65,10 +65,10 @@ class FlowConfig:
     topk: int = 30                 # 论文 k=30
 
     # VCC-2026 mode (data_name='vcc')
-    # data_path = 缓存/共表达图/split 产物根目录。2026-09-19 用户定案：缓存放项目
-    # 文件夹下 /ssd1/ict2/Projects/scDFM/tmp（该路径经 /ssd1/ict2/Projects 软链接
-    # 实际落在 /ssd2 本地盘，/ssd1 NFS 98% 满不占 NFS；语料数据集走 corpus_path）。
-    data_path: str = '/ssd1/ict2/Projects/scDFM/tmp'
+    # data_path = 缓存/共表达图/split 产物根目录。2026-09-20 用户定案：项目整体
+    # 迁至家目录 /home/ict2/Projects（软链接 → /share/ict2/Projects 共享盘 20T），
+    # 缓存/数据集全部随迁；语料数据集走 corpus_path。
+    data_path: str = '/home/ict2/Projects/scDFM/tmp'
     corpus_path: str = REPLOGLE_TRAIN_PATH
     panel_path: str = REPLOGLE_PANEL_PATH
     test_corpus_path: str = REPLOGLE_TEST_PATH  # split_method='whole' 的独立测试语料（benchmark real 侧）
