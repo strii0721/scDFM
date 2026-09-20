@@ -9,6 +9,13 @@ import pdb
 
 from .layers import GeneadaLN, ContinuousValueEncoder, GeneEncoder, BatchLabelEncoder, TimestepEmbedder, ExprDecoder
 from .blocks import MultiheadDiffAttn, modulate , CrossAttentionTransformerLayer
+
+def _ckpt_block_forward(block, x, value_emb_2, t_emb):
+    """梯度检查点闭包：反向重算发生在 autocast 上下文之外，须在闭包内显式
+    恢复 bf16 autocast，保证重算数值与首次正向逐位一致。"""
+    with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+        return block(x, value_emb_2, t_emb)
+
 class Block(nn.Module):
     """
     A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning.
@@ -238,7 +245,14 @@ class model(nn.Module):
             perturbation_exp = perturbation_emb[:, None, :].expand(-1, x.size(1), -1)  # (B, T, emb)
             x = torch.cat([x, perturbation_exp], dim=-1)
             x = self.adapter_layer[i](x)
-            x = block(x, value_emb_2, t_emb)
+            # 2026-09-20 梯度检查点：全轴 L=11,071 时块内 4 个 (B,8,L,L) 注意力
+            # 矩阵的正向保留 ≈ B×47GB 越 80GB 显存（B=1 即 OOM）。检查点只存块
+            # 输入、反向时重算该块——同算子同输入重算，实测梯度差 ≤1.2e-7
+            # （bf16 单 ulp，cuBLAS 重算不确定性），训练等价；代价 ~40% 步时。
+            # autocast 状态不会延续到反向重算，故在闭包内显式开。
+            x = torch.utils.checkpoint.checkpoint(
+                _ckpt_block_forward, block, x, value_emb_2, t_emb,
+                use_reentrant=False)
 
         
         if mode=="predict_p":

@@ -20,10 +20,10 @@ export PYTHONUNBUFFERED=1
 GPUS="${GPUS:-8}"
 
 # 论文全局 batch=96（附录 A.4.3）；多卡 DDP 时按卡数分摊到每 rank。
-# 2026-09-20 全轴 L=11,071：Diff 注意力 softmax 强制 fp32，(B,2H,L,L) 张量
-# 每 rank B=12 时 ≈94GB 越 80GB 显存墙 → 显存墙上限 RANK_BATCH≤3（B=3 峰值
-# ≈55-60GB），默认 8 卡 BATCH_TOTAL=24（RANK_BATCH=3）；单卡时请 BATCH_TOTAL=3。
-BATCH_TOTAL="${BATCH_TOTAL:-24}"
+# 2026-09-20 全轴 L=11,071 + 梯度检查点（model.py 正向循环）：探针实测单卡
+# 峰值 B=1→36GB、B=2→71GB、B=3→82GB(越 80GB 墙，含 expandable_segments)。
+# → RANK_BATCH 上限=2，默认 8 卡 BATCH_TOTAL=16；单卡时请 BATCH_TOTAL=2。
+BATCH_TOTAL="${BATCH_TOTAL:-16}"
 RANK_BATCH=$((BATCH_TOTAL / GPUS))
 
 # 训练每步建模基因数 L（2026-09-17 定案：300 panel 列不进训练窗口，靶基因表达由
