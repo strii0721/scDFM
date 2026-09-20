@@ -47,11 +47,11 @@ class FlowConfig:
     result_path: str = 'output/train'
     perturbation_fusion_method: str = 'sum' # mlp, sum
     fusion_method: str = 'differential_perceiver' # cross , concat, add
-    infer_top_gene: int = 3000
-    # 2026-09-19 用户定案（第二次）：训练每步从 common_hvg 清单 − panel 池随机抽
-    # 3000（首版=同池抽 1000；中间尝试过全轴−panel 抽 3000 已回退——评估集不变、
-    # 训练 6.4× 慢且 benchmark 覆盖天花板不动）。缓存列 = train_pool_path 清单
-    # ∩ 语料 var（~29.5GB）。n_top_genes 仅作缓存/vocab 键组分。
+    infer_top_gene: int = 11919
+    # 2026-09-20 用户定案：训练每步从【整个基因轴 − panel】随机抽全轴（min 上限
+    # = 非 panel 缓存列 11,071）。不再用 common_hvg 池。缓存列回全轴：train_pool_path=''
+    # 时 data.py 用 HVG n_top_genes=11919 实质保留全部有 dispersion 的列（零方差
+    # 548 列剔除，实测 11,371），缓存 ~87GB。
     n_top_genes: int = 11919
     checkpoint_path: str = ''
     gamma: float = 0.5             # 论文 MMD λ=0.5
@@ -72,7 +72,7 @@ class FlowConfig:
     corpus_path: str = REPLOGLE_TRAIN_PATH
     panel_path: str = REPLOGLE_PANEL_PATH
     test_corpus_path: str = REPLOGLE_TEST_PATH  # split_method='whole' 的独立测试语料（benchmark real 侧）
-    train_pool_path: str = os.path.join(REPLOGLE_DATA_DIR, 'common_hvg.csv')  # 训练每步采样池（基因清单，表头 gene_name，∩ 语料 var − panel）；空串=整个基因轴 − panel
+    train_pool_path: str = ''  # 训练每步采样池（非空=基因清单；空串=整个基因轴 − panel，2026-09-20 定案）
     line_col: str = 'context'   # replogle train 文件 context=K562/Jurkat/HepG2（obs 无 cell_line 列）
     heldout_line: str = 'RPE1'  # whole 切分下仅作 benchmark 的 context 标签
     crispr_type_col: str = ''   # replogle 文件无 crispr_type 列；留空直接跳过 CRISPRi 过滤

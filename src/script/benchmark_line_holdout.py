@@ -64,7 +64,7 @@ class BenchConfig(FlowConfig):
     de_backend: str = 'pdex'   # 无 gpudge 时显式 CPU DE 后端
     allow_degenerate_baseline: bool = False  # baseline 锚点退化（如 lfc_nmae 显著集 <10 门控）时仍写出
     # 提交侧同款（generate_submission.GenConfig 亦有此二项）
-    top_infer_genes: int = 1000
+    top_infer_genes: int = 11919  # 建模基因数（2026-09-20 定案=全轴；select_modeled_genes 内 min 到池大小）
     ode_steps: int = 100
     mask_fname: str = ''  # artifact_paths 需要该字段（空=按 split_method/topk 派生）
     # 多卡分片（2026-09-15：单卡串行 286 基因 ODE ~4min/基因太慢，8 卡分片）

@@ -47,7 +47,7 @@ class GenConfig(FlowConfig):
     batch_size: int = 96
     seed: int = 42
     ode_steps: int = ODEDEF_STEPS
-    top_infer_genes: int = 1000  # top-HVG 建模基因数（+ 强制 panel）
+    top_infer_genes: int = 11919  # 建模基因数（2026-09-20 定案=全轴；select_modeled_genes 内 min 到池大小）
     max_pairs: int = 0  # smoke: cap pairs per shard (0 = all)
 
 
@@ -118,10 +118,10 @@ def read_var_names(f: h5py.File):
 
 def select_modeled_genes(cache: str, panel_path: str, top_infer_genes: int,
                          vocab: GeneVocab, pool_path: str = '') -> list[str]:
-    """从 processed cache 选建模基因（2026-09-17 用户定案口径）：与训练侧同池——
-    先在 common_hvg（pool_path，空串=全轴）中排除全部 panel，按 dispersions_norm
-    取 top-N 非 panel 基因。panel 不建模——扰动靶基因的表达由推理侧直接置 0
-    （KD 语义，6 指标全部剔除靶基因）。"""
+    """从 processed cache 选建模基因（2026-09-17 定案：panel 不建模——扰动靶基因
+    表达由推理侧直接置 0，KD 语义，6 指标全部剔除靶基因）。口径：在采样池
+    （pool_path，空串=整个基因轴）中排除全部 panel，按 dispersions_norm 取
+    top-N 非 panel 基因；2026-09-20 定案 top-N=11919 → 全部非 panel 缓存列。"""
     with h5py.File(cache, 'r') as f:
         names = read_var_names(f)
         disp = np.asarray(f['var']['dispersions_norm'][:])
@@ -222,7 +222,7 @@ def main():
     modeled = select_modeled_genes(cache, config.panel_path, config.top_infer_genes,
                                    vocab, pool_path=config.train_pool_path)
     print(f'modeled genes: {len(modeled)} (top-{config.top_infer_genes} by dispersion '
-          f'within common_hvg − panel; panel targets zeroed at inference)', flush=True)
+          f'within full axis − panel; panel targets zeroed at inference)', flush=True)
 
     gene_ids = torch.tensor(vocab.encode(modeled), dtype=torch.long, device=device)
     L = len(modeled)

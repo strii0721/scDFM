@@ -6,7 +6,7 @@
 #   bash scripts/train.sh              # 默认 8 卡 DDP（torchrun）
 #   GPUS=1 bash scripts/train.sh       # 单卡
 #   STEPS=200 bash scripts/train.sh    # 覆盖步数
-#   TOP_INFER=3000 bash scripts/train.sh  # 训练每步建模基因数 L（默认 3000；panel 列不进窗口）
+#   TOP_INFER=11919 bash scripts/train.sh  # 训练每步建模基因数 L（默认 11919=全轴；min 到非 panel 缓存列 11,071）
 # 训练超参/数据路径全部走 config/config_flow.py 默认值（VCC 主线已收口），
 # 这里只传运行态参数；其他覆盖直接追加 tyro 参数:
 #   bash scripts/train.sh --gamma=1.0 --max_test_perts=0
@@ -25,9 +25,9 @@ RANK_BATCH=$((BATCH_TOTAL / GPUS))
 
 # 训练每步建模基因数 L（2026-09-17 定案：300 panel 列不进训练窗口，靶基因表达由
 # 推理侧置 0；每步从采样池随机抽 L——池默认 = config.train_pool_path 的 common_hvg
-# 清单（∩ 语料 var − panel，2026-09-19 二版定案 L=3000）；空串回退=整个基因轴 − panel。
+# 清单（∩ 语料 var − panel）；空串回退=整个基因轴 − panel（2026-09-20 定案，缓存全轴）。
 # 缓存/mask/vocab 派生键含池路径，换池须重建。
-TOP_INFER="${TOP_INFER:-3000}"
+TOP_INFER="${TOP_INFER:-11919}"
 
 ARGS=(--data_name=vcc --batch_size="$RANK_BATCH" --infer_top_gene="$TOP_INFER")
 [ -n "${STEPS:-}" ] && ARGS+=(--steps="$STEPS")
