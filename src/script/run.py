@@ -246,7 +246,9 @@ def generate_sample(wrapped_vf,source,condition_vec=None,vf=None,gene_ids=None,g
     
     noise_type = config.noise_type
     if noise_type=="Gaussian":
-        target_noise = torch.randn(source.shape[0],config.infer_top_gene,device=source.device)
+        # 噪声维=实际窗口维（source.shape[1]），勿用 config.infer_top_gene——
+        # 全轴定案后 config 值(11919)≠运行时窗口(非 panel 缓存列 11,071)
+        target_noise = torch.randn(source.shape[0], source.shape[1], device=source.device)
     elif noise_type=="Poisson":
         target_noise = make_lognorm_poisson_noise(
             target_log=source,

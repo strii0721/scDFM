@@ -31,7 +31,7 @@ echo "checkpoint: $CKPT"
 mkdir -p "$PARTIALS"
 rm -f "$PARTIALS"/partial_s*.h5ad
 
-COMMON="--data_name=vcc --batch_size=64 \
+COMMON="--data_name=vcc --batch_size=3 \
   --checkpoint_path $CKPT"
 # ODE 步数缺省走 config（ODEDEF_STEPS=100，论文口径）；显式设置才覆盖
 [ -n "${ODE_STEPS:-}" ] && COMMON="$COMMON --ode_steps=$ODE_STEPS"

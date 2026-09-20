@@ -44,7 +44,7 @@ class GenConfig(FlowConfig):
     out_dir: str = ''           # partial h5ad 输出目录
     shard_id: int = 0
     num_shards: int = 1
-    batch_size: int = 96
+    batch_size: int = 3  # ODE 批大小（2026-09-20 全轴 L=11,071：fp32 注意力显存墙 B≤3-4）
     seed: int = 42
     ode_steps: int = ODEDEF_STEPS
     top_infer_genes: int = 11919  # 建模基因数（2026-09-20 定案=全轴；select_modeled_genes 内 min 到池大小）

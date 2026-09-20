@@ -10,7 +10,9 @@
 #   单文件语料留系（原口径，--split_method=single_line）:
 #     bash scripts/benchmark_run.sh HCT116 output/train/<ts>/iteration_100000/checkpoint.pt
 # 环境变量:
-#   NUM_SHARDS(默认8) BATCH_SIZE(默认200, 分片 worker) ODE_STEPS(默认100=config)
+#   NUM_SHARDS(默认8) BATCH_SIZE(默认3; 全轴 L=11,071 下 B=12+ 即越显存墙——fp32
+#     attention (B,2H,L,L) B=4 时 ≈63GB 已贴 80GB 上限，B=3 ≈47GB 留余量)
+#   ODE_STEPS(默认100=config)
 #   SPLIT(默认whole，须与训练一致以命中 mask 派生键)
 # 产物: output/benchmark/<tag>/ real.h5ad pred_shard*.h5ad pred.h5ad baseline/ run/ scores.csv
 #       output/benchmark/<时间戳>_<tag>.md
@@ -24,7 +26,7 @@ CKPT="${2:?usage: benchmark_run.sh <heldout_line> <checkpoint.pt> [tag]}"
 TAG="${3:-$(echo "$LINE" | tr '[:upper:]' '[:lower:]')}"
 OUT="output/benchmark/$TAG"
 N_SHARDS="${NUM_SHARDS:-8}"
-BATCH="${BATCH_SIZE:-200}"
+BATCH="${BATCH_SIZE:-3}"
 ODE="${ODE_STEPS:-100}"
 SPLIT="${SPLIT:-whole}"
 
