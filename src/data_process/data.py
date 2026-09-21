@@ -56,8 +56,13 @@ class Data:
                     d = np.load(cache + '.data.npy', mmap_mode='r')
                     idx = np.load(cache + '.indices.npy', mmap_mode='r')
                     ptr = np.load(cache + '.indptr.npy', mmap_mode='r')
-                    self.adata.X = sparse.csr_matrix((d, idx, ptr),
-                                                     shape=self.adata.shape, copy=False)
+                    # 注意：csr_matrix((d,idx,ptr), copy=False) 仍走 COO→CSR 转换并
+                    # 无条件拷贝（实测 RSS 92GB）；零拷贝必须空构造 + 属性直赋。
+                    X = sparse.csr_matrix(self.adata.shape, dtype=d.dtype)
+                    X.data = d
+                    X.indices = idx
+                    X.indptr = ptr
+                    self.adata.X = X
                     print(f'##### load_data: X via shared memmap sidecars: {sidecar} #####')
                 print(f'##### load_data: cache hit, corpus read skipped: {cache} #####')
             else:
