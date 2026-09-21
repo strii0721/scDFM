@@ -14,6 +14,7 @@ from torch.utils.data import Dataset, DataLoader
 import pdb
 import tqdm
 from random import shuffle
+from scipy import sparse
 from src.utils.utils import build_gene_coexpression_graph,sorted_pad_mask
 # combosciplex url: https://figshare.com/articles/dataset/combosciplex/25062230?file=44229635
 # 'norman' url = 'https://dataverse.harvard.edu/api/access/datafile/6154020'
@@ -45,6 +46,19 @@ class Data:
             if os.path.exists(cache):
                 self.adata = sc.read_h5ad(cache)
                 self._loaded_from_cache = True
+                # 共享内存加载（2026-09-21）：X 侧车 .npy 存在时用 memmap 零拷贝映射，
+                # 多 rank 共享同一份文件页缓存（~62GB）而非各持私有 62GB 拷贝——共享机
+                # 他人作业挤占内存时私有拷贝会被内核 OOM（当日三次 SIGKILL）。文件页
+                # 可回收，memmap 版本基本免疫 OOM killer。
+                sidecar = cache + '.data.npy'
+                if os.path.exists(sidecar):
+                    self.adata = sc.read_h5ad(cache + '.meta.h5ad')
+                    d = np.load(cache + '.data.npy', mmap_mode='r')
+                    idx = np.load(cache + '.indices.npy', mmap_mode='r')
+                    ptr = np.load(cache + '.indptr.npy', mmap_mode='r')
+                    self.adata.X = sparse.csr_matrix((d, idx, ptr),
+                                                     shape=self.adata.shape, copy=False)
+                    print(f'##### load_data: X via shared memmap sidecars: {sidecar} #####')
                 print(f'##### load_data: cache hit, corpus read skipped: {cache} #####')
             else:
                 self.adata = sc.read_h5ad(self.config.corpus_path)
@@ -300,6 +314,13 @@ class Data:
                 if hasattr(self.adata.X, 'indices'):
                     self.adata.X.indices = self.adata.X.indices.astype(np.int32, copy=False)
                 self.adata.write(cache)
+                # X 侧车（共享 memmap 加载用）：data/indices/indptr 三组 .npy + 无 X 的
+                # meta.h5ad（obs/var/uns）。load_data 检测到侧车即走零拷贝共享加载。
+                np.save(cache + '.data.npy', self.adata.X.data)
+                np.save(cache + '.indices.npy', self.adata.X.indices)
+                np.save(cache + '.indptr.npy', self.adata.X.indptr)
+                sc.AnnData(X=None, obs=self.adata.obs, var=self.adata.var,
+                           uns=self.adata.uns).write(cache + '.meta.h5ad')
                 print(f'##### vcc: processed cached to {cache} #####')
             # 5) split：默认 single_line（HCT116 留系，2026-09-14 取代五折）；
             #    'single' = 80/20 panel 基因留出 x5 折（原方案，fold 选折）。
