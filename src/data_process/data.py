@@ -574,9 +574,9 @@ class TrainSampler:
             tgt_batch_idx = np.random.choice(tgt_idx, batch_size)
             src_batch_idx = np.random.choice(src_idx, batch_size)
             
-            tgt_batch = torch.from_numpy(self.adata.X[tgt_batch_idx].toarray())
+            tgt_batch = torch.from_numpy(_row_slice_csr(self.adata.X, tgt_batch_idx).toarray())
             
-            src_batch = torch.from_numpy(self.adata.X[src_batch_idx].toarray())
+            src_batch = torch.from_numpy(_row_slice_csr(self.adata.X, src_batch_idx).toarray())
             
             return {
                 'src_cell_data': src_batch,
@@ -633,20 +633,20 @@ class TestDataset:
     
     def get_control_data(self, line: Optional[str] = None):
         mask = self._mask(True, line=line)
-        control_data = self.adata[mask]
+        rows = np.nonzero(mask)[0]
         return {
-            'src_cell_data': torch.from_numpy(control_data.X.toarray()),
-            'src_cell_id': control_data.obs_names,
-            'condition_id': torch.tensor(self.perturbation_covariates_id[mask]),
+            'src_cell_data': torch.from_numpy(_row_slice_csr(self.adata.X, rows).toarray()),
+            'src_cell_id': self.adata.obs_names[rows],
+            'condition_id': torch.tensor(self.perturbation_covariates_id[rows]),
         }
-    
+
     def get_perturbation_data(self, perturbation: str, line: Optional[str] = None):
         mask = self._mask(False, line=line, perturbation=perturbation)
-        perturbation_data = self.adata[mask]
+        rows = np.nonzero(mask)[0]
         return {
-            'tgt_cell_data': torch.from_numpy(perturbation_data.X.toarray()),
-            'tgt_cell_id': perturbation_data.obs_names,
-            'condition_id': torch.tensor(self.perturbation_covariates_id[mask]),
+            'tgt_cell_data': torch.from_numpy(_row_slice_csr(self.adata.X, rows).toarray()),
+            'tgt_cell_id': self.adata.obs_names[rows],
+            'condition_id': torch.tensor(self.perturbation_covariates_id[rows]),
         }
     
     def perturbation_line_pairs(self, min_tgt_cells: int = 1):
@@ -666,6 +666,32 @@ class TestDataset:
         
     
     
+def _row_slice_csr(X, rows):
+    """按行提取 csr 子矩阵，只读选中行。
+
+    绕过 scipy 的 __getitem__/astype 路径：scipy 切片前会对 indices/indptr 调
+    .astype(idx_dtype, copy=False)，对 memmap 支撑的数组 numpy 判定必须拷贝，
+    于是每次切片物化整个 ~29GB indices（2026-09-21 cProfile 实锤：43s/次，
+    32 worker 首批 ≈1TB anon → cgroup 768GB OOM 元凶）。本实现零全表扫描。"""
+    rows = np.asarray(rows)
+    starts = X.indptr[rows]
+    ends = X.indptr[rows + 1]
+    lens = (ends - starts).astype(np.int64, copy=False)
+    total = int(lens.sum())
+    out_indptr = np.zeros(len(rows) + 1, dtype=np.int64)
+    np.cumsum(lens, out=out_indptr[1:])
+    out_indices = np.empty(total, dtype=X.indices.dtype)
+    out_data = np.empty(total, dtype=X.dtype)
+    pos = 0
+    for s, e in zip(starts.tolist(), ends.tolist()):
+        n = e - s
+        out_data[pos:pos + n] = X.data[s:e]
+        out_indices[pos:pos + n] = X.indices[s:e]
+        pos += n
+    return sparse.csr_matrix((out_data, out_indices, out_indptr),
+                             shape=(len(rows), X.shape[1]))
+
+
 class PerturbationDataset(Dataset):
     def __init__(self, sampler: TrainSampler, batch_size: int):
         self.sampler = sampler
@@ -694,12 +720,8 @@ class PerturbationDataset(Dataset):
             src_idx = self.control_idx
         tgt_batch_idx = np.random.choice(tgt_idx, self.batch_size)
         src_batch_idx = np.random.choice(src_idx, self.batch_size)
-        if hasattr(self.sampler.adata.X[src_batch_idx], "toarray"):
-            src_batch = torch.from_numpy(self.sampler.adata.X[src_batch_idx].toarray())
-            tgt_batch = torch.from_numpy(self.sampler.adata.X[tgt_batch_idx].toarray())
-        else:
-            src_batch = torch.from_numpy(self.sampler.adata.X[src_batch_idx])
-            tgt_batch = torch.from_numpy(self.sampler.adata.X[tgt_batch_idx])
+        src_batch = torch.from_numpy(_row_slice_csr(self.sampler.adata.X, src_batch_idx).toarray())
+        tgt_batch = torch.from_numpy(_row_slice_csr(self.sampler.adata.X, tgt_batch_idx).toarray())
         
         return {
             'src_cell_data': src_batch,
