@@ -63,6 +63,13 @@ class Data:
                     X.data = d
                     X.indices = idx
                     X.indptr = ptr
+                    # 关键（2026-09-21 两次训练崩因）：属性直赋后 scipy 不缓存
+                    # canonical 状态，首次切片会触发 sum_duplicates 全量校验拷贝
+                    # （实测 38s + 92GB/进程；8 rank × 4 worker 并发 → cgroup
+                    # 768GB 限额秒爆，worker 被 OOM kill）。数组源自 anndata 写出
+                    # 的规范 csr（行内已排序、无重复，经逐位验证），直接置真。
+                    X.has_sorted_indices = True
+                    X.has_canonical_format = True
                     self.adata.X = X
                     print(f'##### load_data: X via shared memmap sidecars: {sidecar} #####')
                 else:
