@@ -118,10 +118,10 @@ def read_var_names(f: h5py.File):
 
 def select_modeled_genes(cache: str, panel_path: str, top_infer_genes: int,
                          vocab: GeneVocab, pool_path: str = '') -> list[str]:
-    """从 processed cache 选建模基因（2026-09-17 定案：panel 不建模——扰动靶基因
-    表达由推理侧直接置 0，KD 语义，6 指标全部剔除靶基因）。口径：在采样池
-    （pool_path，空串=整个基因轴）中排除全部 panel，按 dispersions_norm 取
-    top-N 非 panel 基因；2026-09-20 定案 top-N=11919 → 全部非 panel 缓存列。"""
+    """从 processed cache 选建模基因（2026-09-21 定案：建模基因子集 = 完整基因轴，
+    含 panel——panel 是其他扰动的真实 DEG，不可排除；推理侧仅对扰动自身靶列
+    置 0，KD 语义）。口径：在采样池（pool_path，空串=整个基因轴）按
+    dispersions_norm 取 top-N；2026-09-21 定案 top-N=11919 → 全部缓存列。"""
     with h5py.File(cache, 'r') as f:
         names = read_var_names(f)
         disp = np.asarray(f['var']['dispersions_norm'][:])
@@ -131,11 +131,8 @@ def select_modeled_genes(cache: str, panel_path: str, top_infer_genes: int,
         pool = set(pd.read_csv(pool_path)['gene_name'].astype(str).tolist())
         pool &= name_set  # ∩ 语料 var
         assert pool, f'pool_path={pool_path!r} yields no usable genes'
-    panel = pd.read_csv(panel_path, header=None)[0].astype(str).tolist()
-    panel_set = set(g for g in panel if g in name_set)
     rank = np.argsort(-disp)
-    cands = [names[i] for i in rank
-             if (pool is None or names[i] in pool) and names[i] not in panel_set]
+    cands = [names[i] for i in rank if (pool is None or names[i] in pool)]
     top = cands[:top_infer_genes]
     modeled = [g for g in top if g in vocab]
     return modeled

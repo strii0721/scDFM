@@ -36,9 +36,9 @@ ot_sampler = OTPlanSampler(method="exact")
 path = AffineProbPath(scheduler=CondOTScheduler())
 
 # 训练每步基因选择状态（main() 初始化，train_step 读取）：
-# 2026-09-17 用户定案——300 panel 列不进训练窗口（靶基因表达由推理侧直接置 0），
-# 每步窗口 = 从非 panel 池随机抽 L=infer_top_gene 个基因。
-_non_panel_idx: torch.Tensor | None = None   # 随机抽样池（非 panel 列位置）
+# 2026-09-21 用户定案——建模基因子集 = 完整基因轴（固定集合，含 300 panel 列；
+# 推理侧仅对扰动自身靶列置 0），每步从池随机抽 L=infer_top_gene 个基因。
+_pool_idx: torch.Tensor | None = None   # 随机抽样池（缓存列位置）
 
 def gaussian_kernel(x, y, sigma=1.0):
     beta = 1.0 / (2.0 * sigma**2)
@@ -91,13 +91,13 @@ def train_step(source, target, perturbation_id, vf, criterion, accelerator, nois
     B = source.shape[0]
     device = accelerator.device
     
-    # 2026-09-17 用户定案：panel 列不进训练窗口（靶基因表达由推理侧置 0），
-    # 每步从非 panel 池随机抽 L=infer_top_gene 个基因
-    assert _non_panel_idx is not None, \
-        'non-panel gene indices not initialized (main() sets them before training)'
-    n_rand = min(config.infer_top_gene, _non_panel_idx.shape[0])
-    rand = torch.randperm(_non_panel_idx.shape[0], device=device)[:n_rand]
-    input_gene_ids = _non_panel_idx[rand]
+    # 2026-09-21 用户定案：建模基因子集 = 完整基因轴（含 panel），每步从池随机抽
+    # L=infer_top_gene 个基因（池大小 11,371 时 = 全轴）
+    assert _pool_idx is not None, \
+        'sampling pool not initialized (main() sets it before training)'
+    n_rand = min(config.infer_top_gene, _pool_idx.shape[0])
+    rand = torch.randperm(_pool_idx.shape[0], device=device)[:n_rand]
+    input_gene_ids = _pool_idx[rand]
     source = source[:,input_gene_ids]
     target = target[:,input_gene_ids]
     gene = gene_ids.repeat(B,1).to(device)
@@ -332,31 +332,29 @@ if __name__ == "__main__":
     
     gene_ids = torch.tensor(gene_ids, dtype=torch.long, device=device)
 
-    # 训练每步基因选择的采样池（2026-09-17 用户定案）：
-    # panel = pert_counts.csv ∩ 语料 var（与 data.py 同口径过滤），panel 列不进训练窗口
-    # （靶基因表达由推理侧直接置 0）。默认池 = train_pool_path 的基因清单
-    # （common_hvg.csv ∩ 语料 var − panel）；空串回退 = 全部非 panel 列。
+    # 训练每步基因选择的采样池（2026-09-21 用户定案）：建模基因子集 = 完整基因轴
+    # （固定集合，含 panel；panel 基因是其他扰动的真实 DEG，不可排除）。
+    # 默认池 = train_pool_path 的基因清单；空串回退 = 全部缓存列（11,371，含 300 panel）。
     panel_raw = pd.read_csv(config.panel_path, header=None)[0].astype(str).tolist()
     panel_genes = [g for g in panel_raw if g in set(data_manager.adata.var_names)]
-    panel_set = set(panel_genes)
     panel_ids = set(vocab.encode(panel_genes))
     panel_mask = torch.tensor([int(g) in panel_ids for g in gene_ids.tolist()],
                               dtype=torch.bool, device=device)
     if config.train_pool_path:
         pool_raw = pd.read_csv(config.train_pool_path)['gene_name'].astype(str).tolist()
         var_names = list(data_manager.adata.var_names)
-        pool_genes = [g for g in pool_raw if g in set(var_names) and g not in panel_set]
+        pool_genes = [g for g in pool_raw if g in set(var_names)]
         assert pool_genes, f'train_pool_path={config.train_pool_path!r} yields no usable genes'
         pos_map = {g: i for i, g in enumerate(var_names)}
-        _non_panel_idx = torch.tensor([pos_map[g] for g in pool_genes],
-                                      dtype=torch.long, device=device)
-        print(f'##### training sampling pool: {_non_panel_idx.shape[0]} genes from '
-              f'{config.train_pool_path} (panel excluded) #####', flush=True)
+        _pool_idx = torch.tensor([pos_map[g] for g in pool_genes],
+                                 dtype=torch.long, device=device)
+        print(f'##### training sampling pool: {_pool_idx.shape[0]} genes from '
+              f'{config.train_pool_path} (panel included) #####', flush=True)
     else:
-        _non_panel_idx = torch.nonzero(~panel_mask, as_tuple=False).squeeze(-1)
-        print(f'##### panel excluded from training window: {int(panel_mask.sum())} panel cols; '
-              f'per-step window = L={config.infer_top_gene} random non-panel cols '
-              f'({_non_panel_idx.shape[0]} pool) #####', flush=True)
+        _pool_idx = torch.arange(gene_ids.shape[0], device=device)
+        print(f'##### full-axis training window: per-step L={config.infer_top_gene} from '
+              f'{_pool_idx.shape[0]} cache cols ({int(panel_mask.sum())} panel cols '
+              f'included) #####', flush=True)
     
     save_path = config.make_path()
     best_loss = float('inf')
