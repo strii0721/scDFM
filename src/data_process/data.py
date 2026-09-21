@@ -294,6 +294,11 @@ class Data:
                 # unless opted in (0.13+ default-on, setting may be removed)
                 if hasattr(ad.settings, 'allow_write_nullable_strings'):
                     ad.settings.allow_write_nullable_strings = True
+                # 缓存写出前把稀疏 X 的列索引 int64→int32：nnz 7.7e9 > 2^31 时
+                # scipy 默认 int64 索引（每 rank RAM ~92GB）；列号 < 2^31 恒成立
+                # （11,371 列），纯索引降精度、数值位不变，每 rank 降到 ~61GB。
+                if hasattr(self.adata.X, 'indices'):
+                    self.adata.X.indices = self.adata.X.indices.astype(np.int32, copy=False)
                 self.adata.write(cache)
                 print(f'##### vcc: processed cached to {cache} #####')
             # 5) split：默认 single_line（HCT116 留系，2026-09-14 取代五折）；

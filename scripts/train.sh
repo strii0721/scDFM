@@ -16,8 +16,14 @@ export PYTHONPATH=.
 # 管道/非 tty 下 python stdout 默认 8KB 块缓冲 → tmux/日志看不到实时进度；
 # 置非缓冲（stderr 本就逐行落盘），训练打印（config dump/checkpoint/进度）即时可见
 export PYTHONUNBUFFERED=1
+# 日志统一 logs/train_{timestamp}.log（2026-09-21 定案命名），本脚本自动落盘
+mkdir -p logs
+exec > >(tee "logs/train_$(date +%F).log") 2>&1
 
 GPUS="${GPUS:-8}"
+# 2026-09-21：全轴缓存每 rank RAM ~61GB（int64→int32 索引后）。共享机 1TB 内存
+# + 他人作业占用，8 rank ≈490GB 可能越可用内存；空卡不足时用
+# GPUS=7 + CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 这类方式选空卡。
 
 # 论文全局 batch=96（附录 A.4.3）；多卡 DDP 时按卡数分摊到每 rank。
 # 2026-09-20 全轴 L=11,071 + 梯度检查点（model.py 正向循环）：探针实测单卡
