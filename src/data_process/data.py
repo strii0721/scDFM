@@ -44,12 +44,13 @@ class Data:
                                  f'{os.path.splitext(os.path.basename(str(self.config.corpus_path)))[0]}'
                                  f'_{pool_stem}.h5ad')
             if os.path.exists(cache):
-                self.adata = sc.read_h5ad(cache)
                 self._loaded_from_cache = True
-                # 共享内存加载（2026-09-21）：X 侧车 .npy 存在时用 memmap 零拷贝映射，
-                # 多 rank 共享同一份文件页缓存（~62GB）而非各持私有 62GB 拷贝——共享机
-                # 他人作业挤占内存时私有拷贝会被内核 OOM（当日三次 SIGKILL）。文件页
-                # 可回收，memmap 版本基本免疫 OOM killer。
+                # 共享内存加载（2026-09-21）：X 侧车 .npy 存在时直接读 meta（MB 级）
+                # + memmap 零拷贝映射，**跳过整 h5ad 读取**（曾每 rank 白读 59GB、
+                # 白分配 62GB 私有内存；read_bytes 实测 65GB/rank）。多 rank 共享同一
+                # 份文件页缓存（~62GB）而非各持私有拷贝——共享机他人作业挤占内存时
+                # 私有拷贝会被内核 OOM（当日三次 SIGKILL）。文件页可回收，memmap
+                # 版本基本免疫 OOM killer。
                 sidecar = cache + '.data.npy'
                 if os.path.exists(sidecar):
                     self.adata = sc.read_h5ad(cache + '.meta.h5ad')
@@ -64,6 +65,8 @@ class Data:
                     X.indptr = ptr
                     self.adata.X = X
                     print(f'##### load_data: X via shared memmap sidecars: {sidecar} #####')
+                else:
+                    self.adata = sc.read_h5ad(cache)
                 print(f'##### load_data: cache hit, corpus read skipped: {cache} #####')
             else:
                 self.adata = sc.read_h5ad(self.config.corpus_path)
