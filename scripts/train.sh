@@ -13,6 +13,11 @@
 # 产物: output/train/{YYYY-MM-DD_HH-MM}/iteration_N/checkpoint.pt（见 config.make_path，时间戳即实验名）
 set -euo pipefail
 export PYTHONPATH=.
+# venv 自激活：ssh 非交互 shell / tmux 不 source .bashrc，裸 python/torchrun 不在
+# PATH（2026-09-21 实测 exit 127）。存在 .venv 时把它的 bin 前置（幂等，已激活也无害）。
+if [ -d ".venv/bin" ]; then
+  export PATH="$(pwd)/.venv/bin:$PATH"
+fi
 # 管道/非 tty 下 python stdout 默认 8KB 块缓冲 → tmux/日志看不到实时进度；
 # 置非缓冲（stderr 本就逐行落盘），训练打印（config dump/checkpoint/进度）即时可见
 export PYTHONUNBUFFERED=1
