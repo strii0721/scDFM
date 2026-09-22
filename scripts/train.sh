@@ -21,6 +21,11 @@ fi
 # 管道/非 tty 下 python stdout 默认 8KB 块缓冲 → tmux/日志看不到实时进度；
 # 置非缓冲（stderr 本就逐行落盘），训练打印（config dump/checkpoint/进度）即时可见
 export PYTHONUNBUFFERED=1
+# 2026-09-22：全轴 L=11,371 时 B=2 反向峰值 ~73GB+7.7GB 瞬时分配；不带本变量时
+# CUDA 缓存分配器碎片浪费 ~9.8GB reserved-unallocated → 越 80GB 墙 OOM（实测
+# rank3 backward OOM：72.85 在用 + 需 7.71）。expandable_segments 让空闲段可
+# 合并复用（torch 2.7 支持），探针实测 B=2=71GB 即含本变量。
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # 日志统一 logs/train_{timestamp}.log（2026-09-21 定案命名），本脚本自动落盘
 mkdir -p logs
 exec > >(tee "logs/train_$(date +%F).log") 2>&1
