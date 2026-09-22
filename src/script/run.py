@@ -364,8 +364,10 @@ if __name__ == "__main__":
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.steps, eta_min=config.eta_min)
     
     if config.checkpoint_path != '':
-        _, _ = load_checkpoint(config.checkpoint_path, vf, optimizer, scheduler)
-    start_iteration = 0
+        start_iteration, _ = load_checkpoint(config.checkpoint_path, vf, optimizer, scheduler)
+        start_iteration += 1
+    else:
+        start_iteration = 0
     # 关键 2/2（2026-09-17 实测）：DDP 构造的 _verify_params_across_processes 用
     # store 交换各 rank 参数数——rank 间加载差可达 37+ 分钟，先到的 rank 读到未
     # 就绪 rank 的空槽（"Rank 2 has inconsistent 0 params"）直接报错。prepare 前
