@@ -191,8 +191,7 @@ def build_pred(cfg: BenchConfig, vf, gene_ids, vocab: GeneVocab, modeled: list[s
         obs_rows.append(pd.DataFrame({'target_gene': [pert] * counts.shape[0],
                                       'context': [cfg.heldout_line] * counts.shape[0],
                                       'target': [pert] * counts.shape[0]}))
-        if (len(rows) % 5) == 0:
-            print(f'pred: {len(rows)}/{len(perts)} genes done', flush=True)
+        print(f'pred: {len(rows)}/{len(perts)} genes done', flush=True)
 
     X = sparse.vstack(rows).tocsr()
     obs_df = pd.concat(obs_rows, ignore_index=True)
