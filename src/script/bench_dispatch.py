@@ -60,10 +60,12 @@ def main() -> None:
     ap.add_argument('--heldout_line', default='RPE1')
     ap.add_argument('--gpus', type=int, default=7)
     ap.add_argument('--ode_steps', type=int, default=12)
-    ap.add_argument('--batch_size', type=int, default=3)
+    ap.add_argument('--batch_size', type=int, default=5)
     ap.add_argument('--free_mb', type=int, default=51200, help='空闲显存门控（默认 50G）')
     ap.add_argument('--poll_s', type=float, default=10.0, help='轮询周期（秒）')
     ap.add_argument('--max_retry', type=int, default=3)
+    ap.add_argument('--settle_s', type=float, default=0.0,
+                    help='启动后先等待 N 秒再扫描 done/下发（供重启时等在飞旧 worker 跑完）')
     args = ap.parse_args()
 
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -81,6 +83,10 @@ def main() -> None:
         except (ValueError, ProcessLookupError):
             pass
     open(lock, 'w').write(str(os.getpid()))
+
+    if args.settle_s > 0:
+        print(f'[dispatch] 等待在飞 worker 完成 {args.settle_s:.0f}s 后再扫描', flush=True)
+        time.sleep(args.settle_s)
 
     log_dir = 'logs/dispatch'
     os.makedirs(log_dir, exist_ok=True)
@@ -127,7 +133,9 @@ def main() -> None:
         env['CUDA_VISIBLE_DEVICES'] = str(g)
         env['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
         proc = subprocess.Popen(cmd, env=env, stdout=open(log, 'w'),
-                                stderr=subprocess.STDOUT)
+                                stderr=subprocess.STDOUT,
+                                start_new_session=True)  # 脱离 dispatcher 进程组：
+        # dispatcher/tmux 被杀不连坐 worker，在飞基因跑完照常落盘
         procs[g] = (task, gene, proc)
         print(f'[dispatch] gpu{g} <- t{task} {gene} '
               f'({time.strftime("%H:%M:%S")})', flush=True)
