@@ -74,6 +74,7 @@ class BenchConfig(FlowConfig):
     pred_tag: str = ''       # 分片文件名后缀 -> pred_{tag}.h5ad
     reuse_real: bool = False # real.h5ad 已存在则直接读，不重扫语料
     eval_out_dir: str = ''   # eval_only 产物目录（空=out_dir）；部分 eval 用它避免污染最终 scores.csv
+    parts_only: bool = False # 只写 predparts 基因级 part，不写整片合并 pred{tag}.h5ad（守护分发单基因 worker）
 
 
 def _cli_bin() -> str:
@@ -362,9 +363,10 @@ def main() -> None:
     vf = vf.to(device).eval()
 
     pred = build_pred(cfg, vf, gene_ids, vocab, modeled, real, device)
-    tag = f'_{cfg.pred_tag}' if cfg.pred_tag else ''
-    pred_path = os.path.join(cfg.out_dir, f'pred{tag}.h5ad')
-    pred.write_h5ad(pred_path)
+    if not cfg.parts_only:
+        tag = f'_{cfg.pred_tag}' if cfg.pred_tag else ''
+        pred_path = os.path.join(cfg.out_dir, f'pred{tag}.h5ad')
+        pred.write_h5ad(pred_path)
 
     if not cfg.no_eval:
         _run_eval(cfg, real, pred)
