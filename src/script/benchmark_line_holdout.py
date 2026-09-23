@@ -166,7 +166,21 @@ def build_pred(cfg: BenchConfig, vf, gene_ids, vocab: GeneVocab, modeled: list[s
     perts = sorted(p for p in real.obs['target_gene'].astype(str).unique() if p != 'non-targeting')
     rng = np.random.default_rng(cfg.seed)
     rows, obs_rows = [], []
-    for pert in perts:
+    # 每基因立即落盘（2026-09-23 用户定案）：进程被杀不丢已完成基因；
+    # 同片重启自动跳过已存在 part（resume-skip），整片末尾仍合并写
+    # pred{tag}.h5ad 供 eval 使用（eval 逻辑不变）。
+    parts_dir = os.path.join(cfg.out_dir, 'predparts')
+    os.makedirs(parts_dir, exist_ok=True)
+    tag = f'_{cfg.pred_tag}' if cfg.pred_tag else ''
+    var_df = pd.DataFrame(index=real.var_names)
+    for i, pert in enumerate(perts):
+        part_path = os.path.join(parts_dir, f'pred{tag}_g{i:03d}.h5ad')
+        if os.path.exists(part_path):
+            part = ad.read_h5ad(part_path)
+            rows.append(part.X.tocsr())
+            obs_rows.append(part.obs)
+            print(f'pred: reuse part g{i:03d} ({pert}), {len(rows)}/{len(perts)} genes done', flush=True)
+            continue
         src_idx = np.sort(rng.choice(len(ctl_idx_all), size=min(cfg.n_pred_cells, len(ctl_idx_all)),
                                      replace=False))
         src_raw = ctl_raw[src_idx]                        # (n, 18533)
@@ -187,10 +201,13 @@ def build_pred(cfg: BenchConfig, vf, gene_ids, vocab: GeneVocab, modeled: list[s
         counts = log1p_bridge_to_counts(pred_modeled, src_norm.toarray(), depths,
                                         modeled_pos_full, stable_seed(cfg.heldout_line, pert, cfg.seed + 7),
                                         zero_idx=np.array([gene_axis_pos[pert]], dtype=np.int64))
+        obs_g = pd.DataFrame({'target_gene': [pert] * counts.shape[0],
+                              'context': [cfg.heldout_line] * counts.shape[0],
+                              'target': [pert] * counts.shape[0]})
         rows.append(sparse.csr_matrix(counts))
-        obs_rows.append(pd.DataFrame({'target_gene': [pert] * counts.shape[0],
-                                      'context': [cfg.heldout_line] * counts.shape[0],
-                                      'target': [pert] * counts.shape[0]}))
+        obs_rows.append(obs_g)
+        ad.AnnData(X=sparse.csr_matrix(counts, dtype=np.float32), obs=obs_g,
+                   var=var_df).write_h5ad(part_path)
         print(f'pred: {len(rows)}/{len(perts)} genes done', flush=True)
 
     X = sparse.vstack(rows).tocsr()

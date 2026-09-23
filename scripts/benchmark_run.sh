@@ -46,6 +46,7 @@ mkdir -p "$OUT" "logs"
 
 if [ "$SKIP_PREP" != "1" ]; then
   rm -f "$OUT"/pred_shard*.h5ad
+  rm -rf "$OUT"/predparts
   echo "== prep (real.h5ad + perts.txt) =="
   "$PY" -u "$SCRIPT" --checkpoint_path "$CKPT" --split_method="$SPLIT" \
     --heldout_line="$LINE" --out_dir "$OUT" --no_eval \
