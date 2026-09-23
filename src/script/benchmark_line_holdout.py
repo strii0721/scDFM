@@ -73,6 +73,7 @@ class BenchConfig(FlowConfig):
     eval_only: bool = False  # 跳过构建：拼接 out_dir/pred*.h5ad + real.h5ad 后跑三件套
     pred_tag: str = ''       # 分片文件名后缀 -> pred_{tag}.h5ad
     reuse_real: bool = False # real.h5ad 已存在则直接读，不重扫语料
+    eval_out_dir: str = ''   # eval_only 产物目录（空=out_dir）；部分 eval 用它避免污染最终 scores.csv
 
 
 def _cli_bin() -> str:
@@ -287,23 +288,38 @@ def main() -> None:
     torch.manual_seed(cfg.seed)
     real_path = os.path.join(cfg.out_dir, 'real.h5ad')
 
-    # ---- eval_only：拼接 pred*.h5ad + real.h5ad，直接跑三件套 ----
+    # ---- eval_only：拼接 pred*.h5ad（或 predparts 基因级 part）+ real.h5ad，直接跑三件套 ----
     if cfg.eval_only:
         real = sc.read_h5ad(real_path)
         parts = sorted(glob.glob(os.path.join(cfg.out_dir, 'pred_shard*.h5ad')))
-        assert parts, f'no pred_shard*.h5ad in {cfg.out_dir}'
+        if not parts:
+            # 部分 eval（2026-09-23）：整片未跑完时退到每基因落盘的 part，
+            # 评已完成基因的初步得分（real 侧收口到 pred 实际覆盖的基因）。
+            parts = sorted(glob.glob(os.path.join(cfg.out_dir, 'predparts', 'pred_shard*_g*.h5ad')))
+            assert parts, f'no pred_shard*.h5ad nor predparts in {cfg.out_dir}'
         preds = [sc.read_h5ad(p) for p in parts]
         pred = ad.concat(preds, join='outer', index_unique=None)
+        # real 收口到 pred 覆盖的扰动基因（validate_pair 要求两侧扰动集一致；
+        # 全量 eval 时 pred 覆盖全部 300 基因，此过滤为无操作）
+        pred_genes = set(pred.obs['target_gene'].astype(str).unique()) - {'non-targeting'}
+        tg = real.obs['target_gene'].astype(str).to_numpy()
+        real = real[(tg == 'non-targeting') | np.isin(tg, list(pred_genes))].copy()
+        print(f'eval_only: {len(parts)} parts, {len(pred_genes)} genes, '
+              f'real narrowed to {real.shape[0]} cells', flush=True)
         # 官方口径：pred 侧必须同样含对照类别（non-targeting）。对照本就不预测，
         # 拷贝 real 的对照 counts 补齐，使两侧扰动集合一致（validate_pair 要求逐项相同）。
         ctl_mask = real.obs['target_gene'].values == 'non-targeting'
         ctl = real[ctl_mask].copy()
         pred = ad.concat([pred, ctl], join='outer', index_unique=None)
-        print(f'eval_only: concat {len(parts)} shards + {ctl.shape[0]} ctl -> '
+        print(f'eval_only: concat {len(parts)} parts + {ctl.shape[0]} ctl -> '
               f'{pred.shape[0]} cells x {pred.shape[1]} genes', flush=True)
         # 2026-09-19 用户定案：eval 前 pred 每扰动抽到 n_real_cells(100)，
         # 与 real 侧 100 对齐（DE 检验功效对称），再进三件套
         pred = _subsample_pred(pred, cfg.n_real_cells, cfg.seed)
+        if cfg.eval_out_dir:
+            os.makedirs(cfg.eval_out_dir, exist_ok=True)
+            real.write_h5ad(os.path.join(cfg.eval_out_dir, 'real.h5ad'))
+            cfg.out_dir = cfg.eval_out_dir
         _run_eval(cfg, real, pred)
         return
 
