@@ -92,11 +92,14 @@ def main() -> None:
             ntc_idx = np.sort(rng.choice(ntc_idx, size=args.n_ctrl, replace=False))
         pert_cells = cells[tg_line != 'non-targeting']
         keep_idx = np.sort(np.concatenate([pert_cells, ntc_idx]))
-        sub = a[keep_idx]
-        _t(f'[{line}] slice {len(keep_idx)} rows', t0)
+        # backed h5 散点索引只建视图，tocsr() 时才逐行物化（实测病态慢）——
+        # 先按连续范围读块（h5 快路径），再内存内选行
+        lo, hi = keep_idx.min(), keep_idx.max() + 1
+        block = a[lo:hi]
+        X_block = block.X.tocsr().astype(np.float32)
+        X = X_block[keep_idx - lo]
+        _t(f'[{line}] block [{lo},{hi}) {len(X)} rows', t0)
         tg_sub = tg_all[keep_idx]
-        X = sub.X.tocsr().astype(np.float32)
-        _t('X tocsr+float32', t0)
         ref_pos = np.searchsorted(keep_idx, ntc_idx)
         ref_X = X[ref_pos]
         # ref 算术均值 CPM（精确：每细胞 CPM 后逐细胞平均 = 列加权均值）
@@ -182,7 +185,7 @@ def main() -> None:
         summaries.append(s)
         print(f'[{line}] vcc {int(is_de_vcc.sum())} / pqa {int(is_de_pqa.sum())} DEG rows, '
               f'{time.time()-t0:.0f}s total', flush=True)
-        del _SHARED_X, _REF_X, _REF_MEAN, X, ref_X, sub
+        del _SHARED_X, _REF_X, _REF_MEAN, X, ref_X, block, X_block
 
     for store, name, alpha in [(deg_vcc, 'deg_sets_vcc', 'padj<=0.05'),
                                (deg_pqa, 'deg_sets_pqa', 'padj<0.01')]:
