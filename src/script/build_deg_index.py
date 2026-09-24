@@ -98,7 +98,7 @@ def main() -> None:
         block = a[lo:hi]
         X_block = block.X.tocsr().astype(np.float32)
         X = X_block[keep_idx - lo]
-        _t(f'[{line}] block [{lo},{hi}) {len(X)} rows', t0)
+        _t(f'[{line}] block [{lo},{hi}) {X.shape[0]} rows', t0)
         tg_sub = tg_all[keep_idx]
         ref_pos = np.searchsorted(keep_idx, ntc_idx)
         ref_X = X[ref_pos]
