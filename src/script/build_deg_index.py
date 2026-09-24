@@ -15,7 +15,7 @@
 并行：pdex.pdex 的 group 循环串行（实测单核）——multiprocessing fork（COW 共享
 csr）+ 每 worker 串行 mwu（numba 线程池置 1 防过订阅）。
 
-产物（out_dir）：deg_long_<line>.parquet（p<0.05 未门控行）、deg_sets_vcc.csv、
+产物（out_dir）：deg_long_<line>.csv（p<0.05 未门控行）、deg_sets_vcc.csv、
   deg_sets_pqa.csv、summary.csv（每扰动 n_cells/两口径 DEG 数/is_panel）
 
 用法（远程项目根）:
@@ -158,7 +158,7 @@ def main() -> None:
             'ref_cpm': ref_mean_cpm[ci],
             'line': line,
         })
-        df.to_parquet(os.path.join(args.out_dir, f'deg_long_{line}.parquet'), index=False)
+        df.to_csv(os.path.join(args.out_dir, f'deg_long_{line}.csv'), index=False)
 
         n_genes = pv_mat.shape[1]
         pert_arr = np.array(names)
