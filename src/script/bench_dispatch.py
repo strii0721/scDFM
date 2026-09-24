@@ -1,30 +1,41 @@
 #!/usr/bin/env python3
-"""守护分发进程：每 poll_s(10) 秒轮询所有 GPU 显存，空闲（可用 > free_mb=50G）的
-卡立刻领下一个 panel 基因的推理任务。每基因一个独立进程：跑完立即写
-predparts/pred_shard_disp_{task}_g000.h5ad 并退出（释放显存），下个轮询周期该卡
-若仍空闲则继续领任务；全部 300 基因完成后自动 eval_only 出最终六指标
-（scores.csv 落在 out_dir）。
+"""守护分发进程（2026-09-24 起支持跨机双实例）：
+每 poll_s(10) 秒轮询本机 GPU 显存，空闲（可用 > free_mb=50G）的卡立刻领下一个
+panel 基因的推理任务。每基因一个独立进程：跑完立即写
+predparts/pred_shard_disp_{host}_{task}_g000.h5ad 并退出（释放显存），下个轮询
+周期该卡若仍空闲则继续领任务；全部基因完成后（跨机验证完整）自动 eval_only
+出最终六指标（scores.csv 落在 out_dir）。
+
+跨机协调（.36/.49 各跑一个实例，共享盘同一 out_dir）：
+  - 单实例锁按 host 分离（.dispatch.pid.<host>），两机各持一个锁
+  - 基因认领 = predparts/.claims/<gene> O_EXCL 原子创建（NFS 原子），跨机互斥；
+    启动时清理本机死 pid 的遗留 claim 与 >24h 的陈旧 claim
+  - 任务编号/日志/part 文件名含 host 前缀，跨机不冲突
+  - 最终 eval 由 O_EXCL 认领（.eval.claim）且轮询等全部基因完成才执行，
+    避免一机先跑完时另一机仍在飞 → eval 收口不完整
 
 与旧分片机制的区别：单基因粒度调度 + 显存门控——别人占用某卡（可用 <50G）时
 该卡自动被跳过，别人腾出后自动恢复；进程级失败自动重试（--max_retry）。
 
 断电/重启安全：启动时扫描 predparts 里全部基因级 part（含旧分片命名），已完成
-基因自动跳过；dispatch_map.txt 记录 disp 任务号→基因映射（编号续接）。
+基因自动跳过；dispatch_map_<host>.txt 记录 disp 任务号→基因映射（编号续接）。
 
-用法（在项目根目录）:
-  cd /home/ict2/Projects/scDFM
+用法（在项目根目录，.36 与 .49 各跑一份）:
   .venv/bin/python -m src.script.bench_dispatch \
       --checkpoint_path output/train/2026-09-22_23-10/iteration_21000/checkpoint.pt \
-      --out_dir output/benchmark/replogle_rpe1 --gpus 7 --ode_steps 12
+      --out_dir output/benchmark/replogle_rpe1 --gpus 8 --ode_steps 100
 """
 import argparse
 import glob
 import os
+import socket
 import subprocess
 import sys
 import time
 
 import anndata as ad
+
+HOST = socket.gethostname().split('.')[0]
 
 
 def free_mem_mib() -> dict[int, int]:
@@ -52,6 +63,62 @@ def load_done(out_dir: str) -> set[str]:
     return done
 
 
+def claim_dir(out_dir: str) -> str:
+    d = os.path.join(out_dir, 'predparts', '.claims')
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def claimed_genes(out_dir: str) -> set[str]:
+    return {f for f in os.listdir(claim_dir(out_dir)) if f != '.keep'}
+
+
+def claim_gene(out_dir: str, gene: str) -> bool:
+    """O_EXCL 原子认领（跨机 NFS 互斥）。"""
+    p = os.path.join(claim_dir(out_dir), gene)
+    try:
+        fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, f'{HOST}:{os.getpid()}:{time.time()}\n'.encode())
+        os.close(fd)
+        return True
+    except FileExistsError:
+        return False
+
+
+def release_claim(out_dir: str, gene: str) -> None:
+    try:
+        os.remove(os.path.join(claim_dir(out_dir), gene))
+    except FileNotFoundError:
+        pass
+
+
+def cleanup_stale_claims(out_dir: str) -> None:
+    """启动清理：本机死 pid 的遗留 claim、>24h 的陈旧 claim。"""
+    now = time.time()
+    for f in list(claimed_genes(out_dir)):
+        p = os.path.join(claim_dir(out_dir), f)
+        try:
+            host, pid, ts = open(p).read().strip().split(':')
+        except Exception:
+            os.remove(p)
+            continue
+        stale = (now - float(ts)) > 86400
+        dead_local = (host == HOST and _pid_dead(int(pid)))
+        if stale or dead_local:
+            os.remove(p)
+            print(f'[claim] 清理陈旧认领 {f} ({host}:{pid})', flush=True)
+
+
+def _pid_dead(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return False
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -72,21 +139,23 @@ def main() -> None:
     os.chdir(root)
     out_dir = os.path.abspath(args.out_dir)
 
-    # 单实例锁
-    lock = os.path.join(out_dir, '.dispatch.pid')
+    # 单实例锁（按 host 分离，跨机两实例各持一把）
+    lock = os.path.join(out_dir, f'.dispatch.pid.{HOST}')
     if os.path.exists(lock):
         try:
             pid = int(open(lock).read().strip())
             os.kill(pid, 0)
-            print(f'[abort] 已有 dispatcher 在跑 (pid={pid}, {lock})', flush=True)
+            print(f'[abort] 本机已有 dispatcher 在跑 (pid={pid}, {lock})', flush=True)
             sys.exit(1)
         except (ValueError, ProcessLookupError):
             pass
     open(lock, 'w').write(str(os.getpid()))
 
     if args.settle_s > 0:
-        print(f'[dispatch] 等待在飞 worker 完成 {args.settle_s:.0f}s 后再扫描', flush=True)
+        print(f'[dispatch:{HOST}] 等待在飞 worker 完成 {args.settle_s:.0f}s 后再扫描', flush=True)
         time.sleep(args.settle_s)
+
+    cleanup_stale_claims(out_dir)
 
     log_dir = 'logs/dispatch'
     os.makedirs(log_dir, exist_ok=True)
@@ -94,10 +163,12 @@ def main() -> None:
     with open(os.path.join(out_dir, 'perts.txt')) as f:
         all_genes = [l.strip() for l in f if l.strip()]
     done = load_done(out_dir)
-    queue = [g for g in all_genes if g not in done]
-    print(f'[dispatch] {len(queue)} 待推理 / {len(done)} 已完成（共 {len(all_genes)}）', flush=True)
+    held = claimed_genes(out_dir)
+    queue = [g for g in all_genes if g not in done and g not in held]
+    print(f'[dispatch:{HOST}] {len(queue)} 待推理 / {len(done)} 已完成 / '
+          f'{len(held)} 他机认领中（共 {len(all_genes)}）', flush=True)
 
-    map_path = os.path.join(out_dir, 'dispatch_map.txt')
+    map_path = os.path.join(out_dir, f'dispatch_map_{HOST}.txt')
     task_next = 0
     if os.path.exists(map_path):
         with open(map_path) as f:
@@ -114,7 +185,7 @@ def main() -> None:
         task_next += 1
         map_f.write(f'{task}\t{gene}\n')
         map_f.flush()
-        log = os.path.join(log_dir, f'g{g:02d}_t{task:03d}_{gene}.log')
+        log = os.path.join(log_dir, f'{HOST}_g{g:02d}_t{task:03d}_{gene}.log')
         cmd = [
             os.path.join(root, '.venv/bin/python'), '-m',
             'src.script.benchmark_line_holdout',
@@ -126,7 +197,7 @@ def main() -> None:
             '--ode_steps', str(args.ode_steps),
             '--seed', str(42 + task),
             '--perts', gene,
-            '--pred_tag', f'shard_disp_{task}',
+            '--pred_tag', f'shard_disp_{HOST}_{task}',
             '--parts_only',
         ]
         env = os.environ.copy()
@@ -137,7 +208,7 @@ def main() -> None:
                                 start_new_session=True)  # 脱离 dispatcher 进程组：
         # dispatcher/tmux 被杀不连坐 worker，在飞基因跑完照常落盘
         procs[g] = (task, gene, proc)
-        print(f'[dispatch] gpu{g} <- t{task} {gene} '
+        print(f'[dispatch:{HOST}] gpu{g} <- t{task} {gene} '
               f'({time.strftime("%H:%M:%S")})', flush=True)
 
     while queue or procs:
@@ -146,35 +217,58 @@ def main() -> None:
         for g, (task, gene, proc) in list(procs.items()):
             if proc.poll() is not None:
                 part = os.path.join(out_dir, 'predparts',
-                                    f'pred_shard_disp_{task}_g000.h5ad')
+                                    f'pred_shard_disp_{HOST}_{task}_g000.h5ad')
                 ok = os.path.exists(part)
                 del procs[g]
                 if ok:
+                    release_claim(out_dir, gene)
                     done.add(gene)
-                    print(f'[dispatch] gpu{g} t{task} {gene} 完成 '
+                    print(f'[dispatch:{HOST}] gpu{g} t{task} {gene} 完成 '
                           f'({len(done)}/{len(done) + len(queue)})', flush=True)
                 else:
+                    release_claim(out_dir, gene)
                     retry[gene] = retry.get(gene, 0) + 1
                     if retry[gene] > args.max_retry:
                         gave_up.append(gene)
                         print(f'[ERROR] {gene} 失败 {retry[gene]} 次，放弃 '
-                              f'（日志 logs/dispatch/g{g:02d}_t{task:03d}_{gene}.log）', flush=True)
+                              f'（日志 logs/dispatch/{HOST}_g{g:02d}_t{task:03d}_{gene}.log）',
+                              flush=True)
                     else:
                         queue.append(gene)
-                        print(f'[retry] {gene} 失败（第 {retry[gene]} 次），重新入队', flush=True)
-        # 空闲（可用 > 门控）且无我方进程的卡领任务
+                        print(f'[retry:{HOST}] {gene} 失败（第 {retry[gene]} 次），重新入队',
+                              flush=True)
+        # 空闲（可用 > 门控）且无我方进程的卡领任务（跨机 O_EXCL 认领）
         for g in range(args.gpus):
             if g in procs:
                 continue
-            if free.get(g, 0) > args.free_mb and queue:
-                spawn(g, queue.pop(0))
+            if free.get(g, 0) > args.free_mb:
+                for i in range(len(queue)):
+                    gene = queue[i]
+                    if claim_gene(out_dir, gene):
+                        del queue[i]
+                        spawn(g, gene)
+                        break
         time.sleep(args.poll_s)
 
     map_f.close()
     os.remove(lock)
     if gave_up:
-        print(f'[dispatch] 失败放弃 {len(gave_up)}: {gave_up}', flush=True)
-    print(f'[dispatch] 全部 {len(done)} 基因完成，启动最终 eval_only', flush=True)
+        print(f'[dispatch:{HOST}] 失败放弃 {len(gave_up)}: {gave_up}', flush=True)
+
+    # 最终 eval：跨机 O_EXCL 认领 + 完整性等待（他机仍在飞时轮询到齐再收口）
+    eval_claim = os.path.join(out_dir, '.eval.claim')
+    try:
+        fd = os.open(eval_claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, f'{HOST}:{os.getpid()}:{time.time()}\n'.encode())
+        os.close(fd)
+    except FileExistsError:
+        print(f'[dispatch:{HOST}] 最终 eval 由他机负责，本机退出', flush=True)
+        sys.exit(0)
+    while len(load_done(out_dir)) < len(all_genes) - len(gave_up):
+        print(f'[dispatch:{HOST}] 等待他机收尾：{len(load_done(out_dir))}/'
+              f'{len(all_genes) - len(gave_up)}', flush=True)
+        time.sleep(120)
+    print(f'[dispatch:{HOST}] 全部基因完成，启动最终 eval_only', flush=True)
     subprocess.run([
         os.path.join(root, '.venv/bin/python'), '-m',
         'src.script.benchmark_line_holdout',
@@ -183,7 +277,7 @@ def main() -> None:
         '--out_dir', out_dir,
         '--eval_only',
     ], check=True)
-    print(f'[dispatch] 完成：最终 scores.csv = {os.path.join(out_dir, "scores.csv")}',
+    print(f'[dispatch:{HOST}] 完成：最终 scores.csv = {os.path.join(out_dir, "scores.csv")}',
           flush=True)
 
 
