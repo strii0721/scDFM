@@ -28,6 +28,7 @@ predparts/pred_shard_disp_{host}_{task}_g000.h5ad 并退出（释放显存），
 import argparse
 import glob
 import os
+import random
 import socket
 import subprocess
 import sys
@@ -248,7 +249,9 @@ def main() -> None:
                         del queue[i]
                         spawn(g, gene)
                         break
-        time.sleep(args.poll_s)
+        time.sleep(args.poll_s + random.uniform(0, 2.0))  # 跨机错峰：NFS O_EXCL
+        # 在极窄竞争窗下偶发双认领（2026-09-24 实测 ACIN1），加随机抖动把两机
+        # 的认领时刻错开；偶发重复基因无害（eval 多 400 细胞同模型样本）
 
     map_f.close()
     os.remove(lock)
