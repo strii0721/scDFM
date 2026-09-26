@@ -18,6 +18,8 @@ csr）+ 每 worker 串行 mwu（numba 线程池置 1 防过订阅）。
 产物（out_dir）：deg_long_<line>.csv（p<0.05 未门控行）、deg_sets_vcc.csv、
   deg_sets_pqa.csv、summary.csv（每扰动 n_cells/两口径 DEG 数/is_panel）
 
+运行日志自动落 logs/deg_index_<ts>/build.log（2026-09-26 目录规范，脚本自建）。
+
 用法（远程项目根）:
   .venv/bin/python -u src/script/build_deg_index.py \
       --adata_path /home/ict2/Projects/vcc-2026/resources/datasets/replogle/replogle_k562_jurkat_hepg2.h5ad \
@@ -26,12 +28,24 @@ csr）+ 每 worker 串行 mwu（numba 线程池置 1 防过订阅）。
 import argparse
 import multiprocessing as mp
 import os
+import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 import pandas as pd
 import anndata as ad
+
+
+def _self_log(task: str) -> None:
+    """自建日志目录 logs/<task>_<ts>/build.log 并重定向 stdout/stderr（2026-09-26 目录规范）。"""
+    log_dir = os.path.join('logs', f'{task}_{time.strftime("%Y-%m-%d_%H-%M")}')
+    os.makedirs(log_dir, exist_ok=True)
+    f = open(os.path.join(log_dir, 'build.log'), 'a', buffering=1)
+    os.dup2(f.fileno(), 1)
+    os.dup2(f.fileno(), 2)
+    sys.stdout = f
+    sys.stderr = f
 
 _SHARED_X = None
 _REF_X = None
@@ -63,6 +77,7 @@ def main() -> None:
     ap.add_argument('--gate_cpm', type=float, default=5.0)
     ap.add_argument('--n_workers', type=int, default=64)
     args = ap.parse_args()
+    _self_log('deg_index')
     os.makedirs(args.out_dir, exist_ok=True)
 
     t_all = time.time()

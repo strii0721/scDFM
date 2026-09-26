@@ -19,6 +19,8 @@
   gbar.npy            float32 (11371,)
   genes_cache.csv     缓存列基因名（对齐序）
 
+运行日志自动落 logs/residual_targets_<ts>/build.log（2026-09-26 目录规范，脚本自建）。
+
 用法（远程项目根）:
   .venv/bin/python -u src/script/build_residual_targets.py \
       --adata_path /home/ict2/Projects/vcc-2026/resources/datasets/replogle/replogle_k562_jurkat_hepg2.h5ad \
@@ -27,11 +29,23 @@
 """
 import argparse
 import os
+import sys
 import time
 
 import numpy as np
 import pandas as pd
 import anndata as ad
+
+
+def _self_log(task: str) -> None:
+    """自建日志目录 logs/<task>_<ts>/build.log 并重定向 stdout/stderr（2026-09-26 目录规范）。"""
+    log_dir = os.path.join('logs', f'{task}_{time.strftime("%Y-%m-%d_%H-%M")}')
+    os.makedirs(log_dir, exist_ok=True)
+    f = open(os.path.join(log_dir, 'build.log'), 'a', buffering=1)
+    os.dup2(f.fileno(), 1)
+    os.dup2(f.fileno(), 2)
+    sys.stdout = f
+    sys.stderr = f
 
 
 def cpm_col_mean(X, rows):
@@ -49,6 +63,7 @@ def main() -> None:
     ap.add_argument('--cache_meta', required=True)
     ap.add_argument('--out_dir', default='output/residual_targets')
     args = ap.parse_args()
+    _self_log('residual_targets')
     os.makedirs(args.out_dir, exist_ok=True)
 
     t0 = time.time()

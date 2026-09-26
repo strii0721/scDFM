@@ -22,8 +22,8 @@ predparts/pred_shard_disp_{host}_{task}_g000.h5ad 并退出（释放显存），
 
 用法（在项目根目录，.36 与 .49 各跑一份）:
   .venv/bin/python -m src.script.bench_dispatch \
-      --checkpoint_path output/train/2026-09-22_23-10/iteration_21000/checkpoint.pt \
-      --out_dir output/benchmark/replogle_rpe1 --gpus 8 --ode_steps 100
+      --checkpoint_path output/train_2026-09-22_11-20/iteration_21000/checkpoint.pt \
+      --out_dir output/benchmark_2026-09-26_14-00 --gpus 8 --ode_steps 100
 """
 import argparse
 import glob
@@ -162,6 +162,15 @@ def main() -> None:
     # logs/<task>_<YYYY-MM-DD_HH-MM>/ 每轮一个日期目录，与 output 同名目录对应）
     log_dir = os.path.join('logs', os.path.basename(out_dir), 'dispatch')
     os.makedirs(log_dir, exist_ok=True)
+
+    # dispatcher 自身日志（同规范，不依赖启动方 shell 重定向）
+    dlog_path = os.path.join(os.path.dirname(log_dir), f'dispatcher_{HOST}.log')
+    dlog = open(dlog_path, 'a', buffering=1)
+    os.dup2(dlog.fileno(), 1)
+    os.dup2(dlog.fileno(), 2)
+    sys.stdout = dlog
+    sys.stderr = dlog
+    print(f'[dispatch:{HOST}] self-log: {dlog_path}', flush=True)
 
     with open(os.path.join(out_dir, 'perts.txt')) as f:
         all_genes = [l.strip() for l in f if l.strip()]

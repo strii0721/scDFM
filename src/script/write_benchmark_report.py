@@ -5,7 +5,7 @@
   <out_dir>/scores.csv          -- {metric, from_baseline, ...}，末行 avg_score
   <out_dir>/run/agg_results.csv -- {statistic, <指标列...>}，raw 取 statistic=mean 行
 输出:
-  output/benchmark/<YYYY-MM-DD_HH-MM>_<tag>.md
+  <out_dir>/report_<YYYY-MM-DD_HH-MM>.md（报告随任务目录，2026-09-26 目录规范）
   两行表头（Overall | PDSsc | MSEsc | JACsc | NMAEsc | FIDsc | REACHsc，每指标
   Scaled/Raw 两列）+ 每模型一行数据，不写注释行。
   Scaled = scores.csv 的 from_baseline；Overall = avg_score 行 from_baseline；
@@ -13,7 +13,7 @@
 
 用法（远程项目根）:
   .venv/bin/python -u src/script/write_benchmark_report.py \
-      --out_dir output/benchmark/replogle_rpe1 --line RPE1 [--model_name <名>]
+      --out_dir output/benchmark_2026-09-26_14-00 --line RPE1 [--model_name <名>]
 """
 import os
 import sys
@@ -54,7 +54,7 @@ class Args:
     out_dir: str
     line: str = 'RPE1'                 # 数据行标签（= benchmark 的 context 标签）
     model_name: str = ''               # 留空则行标签 = line
-    benchmark_dir: str = 'output/benchmark'  # md 落点（项目根相对路径）
+    benchmark_dir: str = ''  # md 落点（空=out_dir 自身；2026-09-26 目录规范：报告随任务目录）
 
 
 def main() -> None:
@@ -109,8 +109,9 @@ def main() -> None:
 
     tag = os.path.basename(os.path.normpath(args.out_dir))
     ts = datetime.now().strftime('%Y-%m-%d_%H-%M')
-    os.makedirs(args.benchmark_dir, exist_ok=True)
-    md_path = os.path.join(args.benchmark_dir, f'{ts}_{tag}.md')
+    md_dir = args.benchmark_dir or args.out_dir  # 2026-09-26 定案：报告落任务目录内
+    os.makedirs(md_dir, exist_ok=True)
+    md_path = os.path.join(md_dir, f'report_{ts}.md')
     with open(md_path, 'w') as f:
         f.write(f'# {label} Benchmark（{datetime.now().strftime("%Y-%m-%d")}）\n\n')
         f.write('| ' + ' | '.join(header1_cells) + ' |\n')
