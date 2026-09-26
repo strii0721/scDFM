@@ -158,7 +158,9 @@ def main() -> None:
 
     cleanup_stale_claims(out_dir)
 
-    log_dir = 'logs/dispatch'
+    # worker 日志目录 = logs/<out_dir 基名>/dispatch（用户 2026-09-26 定案：
+    # logs/<task>_<YYYY-MM-DD_HH-MM>/ 每轮一个日期目录，与 output 同名目录对应）
+    log_dir = os.path.join('logs', os.path.basename(out_dir), 'dispatch')
     os.makedirs(log_dir, exist_ok=True)
 
     with open(os.path.join(out_dir, 'perts.txt')) as f:
