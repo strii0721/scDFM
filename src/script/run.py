@@ -87,7 +87,7 @@ def mmd2_unbiased_multi_sigma(X, Y, sigmas):
 
     return torch.stack(vals).mean()
 
-def train_step(source, target, perturbation_id, vf, criterion, accelerator, noise_type='Poisson', mode="predict_y"):
+def train_step(source, target, res_target, perturbation_id, vf, criterion, accelerator, noise_type='Poisson', mode="predict_y"):
     B = source.shape[0]
     device = accelerator.device
     
@@ -106,15 +106,11 @@ def train_step(source, target, perturbation_id, vf, criterion, accelerator, nois
     if mode=="predict_y":
         # source, target = ot_sampler.sample_plan(source, target)
         t = torch.rand(B, device=device)
-        if noise_type=="Gaussian":
-            target_noise = torch.randn_like(source)
-        elif noise_type=="Poisson":
-            target_noise = make_lognorm_poisson_noise(
-                target_log=source,
-                alpha=getattr(config, "poisson_alpha", 0.8),           
-                per_cell_L=getattr(config, "poisson_target_sum", 1e4),  # e.g., 1e4 or None
-            )
-        path_x1 = path.sample(t=t, x_0=target_noise, x_1=target)
+        # 残差目标范式（2026-09-26 用户定案）：x₁ = Res（中心化 log2FC 残差），
+        # 噪声 = Gaussian（目标可负，不再用 lognormal-Poisson 噪声）
+        target_noise = torch.randn_like(source)
+        res_b = res_target[input_gene_ids].expand(B, -1)
+        path_x1 = path.sample(t=t, x_0=target_noise, x_1=res_b)
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=getattr(config, 'use_bf16', False)):
             predicted_x_t_velocity = vf(gene_input,path_x1.x_t, path_x1.t,source,perturbation_id, gene_input, mode=mode)
         loss = ((predicted_x_t_velocity - path_x1.dx_t)**2).mean()
@@ -123,7 +119,7 @@ def train_step(source, target, perturbation_id, vf, criterion, accelerator, nois
             x1_hat = path_x1.x_t + predicted_x_t_velocity*(1-t).unsqueeze(-1)
             # fp32 for stable pairwise-distance kernels under bf16 training
             x1_hat_f = x1_hat.float()
-            target_f = target.float()
+            target_f = res_b.float()
             sigmas = median_sigmas(target_f, scales=(0.5,1.0,2.0,4.0))
             _mmd_loss = mmd2_unbiased_multi_sigma(x1_hat_f, target_f, sigmas)
             loss = loss + _mmd_loss * config.gamma
@@ -305,7 +301,8 @@ if __name__ == "__main__":
     data_manager.process_data(n_top_genes=config.n_top_genes, infer_top_gene=config.infer_top_gene, split_method=config.split_method, fold=config.fold, use_negative_edge=config.use_negative_edge, k=config.topk)
     train_sampler, valid_sampler, test_dl = data_manager.load_flow_data(batch_size=config.batch_size)
     
-    train_dataset = PerturbationDataset(train_sampler, config.batch_size)
+    train_dataset = PerturbationDataset(train_sampler, config.batch_size,
+                                        residual_dir=config.residual_targets_dir)
     dataloader = DataLoader(train_dataset, batch_size=1, shuffle=False,num_workers=config.num_workers,pin_memory=True,persistent_workers=True)  # batch_size=1 因为每个getitem本身就是一个batch
     # data.py computes the (per-corpus / per-fold) mask path and exposes it;
     # recomputing here would drift from the file actually built in process_data
@@ -331,6 +328,16 @@ if __name__ == "__main__":
     gene_ids = vocab.encode(list(data_manager.adata.var_names))
     
     gene_ids = torch.tensor(gene_ids, dtype=torch.long, device=device)
+
+    # 残差目标表（范式二，2026-09-26）：(line, pert) 冻结产物，列对齐缓存基因轴；
+    # mmap 懒加载（res_K562.npy 395MB 不常驻），每 rank 各持一份共享页
+    _res_lines = sorted(pd.read_csv(os.path.join(config.residual_targets_dir, 'combos.csv'))['line'].unique())
+    _res_tables = {L: np.load(os.path.join(config.residual_targets_dir, f'res_{L}.npy'),
+                              mmap_mode='r') for L in _res_lines}
+    assert all(t.shape[1] == gene_ids.shape[0] for t in _res_tables.values()), \
+        'residual table columns != cache gene axis'
+    print(f'##### residual targets loaded: lines={_res_lines}, '
+          f'cols={_res_tables[_res_lines[0]].shape[1]} #####', flush=True)
 
     # 训练每步基因选择的采样池（2026-09-21 用户定案）：建模基因子集 = 完整基因轴
     # （固定集合，含 panel；panel 基因是其他扰动的真实 DEG，不可排除）。
@@ -392,10 +399,16 @@ if __name__ == "__main__":
                 perturbation_name = [inverse_dict[int(perturbation_id[0, 0].cpu().item())]]
                 perturbation_id = torch.tensor(vocab.encode(perturbation_name), dtype=torch.long, device=device)
                 perturbation_id = perturbation_id.repeat(source.shape[0], 1)
-            
+
+            # 残差目标查表（范式二）：每批一个 (line, pert) 组合 -> Res 向量
+            line_id = int(batch_data['line_id'].squeeze(0).item())
+            combo_row = int(batch_data['combo_row'].squeeze(0).item())
+            assert combo_row >= 0, f'combo missing from residual table (line_id={line_id})'
+            res_target = torch.from_numpy(
+                np.asarray(_res_tables[_res_lines[line_id]][combo_row], dtype=np.float32)).to(device)
             
             set_requires_grad_for_p_only(vf, p_only=config.mode)
-            loss = train_step(source, target, perturbation_id, vf, criterion, accelerator, noise_type=config.noise_type, mode=config.mode)
+            loss = train_step(source, target, res_target, perturbation_id, vf, criterion, accelerator, noise_type=config.noise_type, mode=config.mode)
             optimizer.zero_grad(set_to_none=True)
             accelerator.backward(loss)
             optimizer.step()

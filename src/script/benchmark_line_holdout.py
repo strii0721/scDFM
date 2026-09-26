@@ -75,6 +75,7 @@ class BenchConfig(FlowConfig):
     reuse_real: bool = False # real.h5ad 已存在则直接读，不重扫语料
     eval_out_dir: str = ''   # eval_only 产物目录（空=out_dir）；部分 eval 用它避免污染最终 scores.csv
     parts_only: bool = False # 只写 predparts 基因级 part，不写整片合并 pred{tag}.h5ad（守护分发单基因 worker）
+    residual_dir: str = 'output/residual_targets'  # 范式二常量（rbar_p/gbar/genes_cache，2026-09-26）
 
 
 def _cli_bin() -> str:
@@ -153,10 +154,21 @@ def _norm_log1p(raw: sparse.csr_matrix) -> sparse.csr_matrix:
 
 def build_pred(cfg: BenchConfig, vf, gene_ids, vocab: GeneVocab, modeled: list[str],
                real: ad.AnnData, device) -> ad.AnnData:
-    """从 heldout_line 对照生成扰动预测：ODE（单槽条件）→ log1p 桥 → counts。"""
+    """从 heldout_line 对照生成扰动预测：ODE → Reŝ → r̂ = r̄_p − ḡ + Reŝ（r̄_c=0）→
+    Poisson(ctrl × 2^{r̂}) counts（范式二，2026-09-26）。"""
     ctl_idx_all = np.nonzero((real.obs['target_gene'].astype(str) == 'non-targeting').to_numpy())[0]
     ctl_raw = real.X[ctl_idx_all].tocsr()          # raw counts 子矩阵
     ctl_norm = _norm_log1p(ctl_raw)                # log1p(CP10k)
+
+    # 残差目标常量（范式二）：r̄_p / ḡ，按 modeled 序对齐（r̄_c(RPE1)=0 用户定案）
+    rbar_p_all = np.load(os.path.join(cfg.residual_dir, 'rbar_p.npy'), mmap_mode='r')
+    rbar_p_perts = pd.read_csv(os.path.join(cfg.residual_dir, 'rbar_p_perts.csv'))['pert'].tolist()
+    gbar_all = np.load(os.path.join(cfg.residual_dir, 'gbar.npy'))
+    cache_genes = pd.read_csv(os.path.join(cfg.residual_dir, 'genes_cache.csv'))['gene'].tolist()
+    assert set(cache_genes) == set(modeled), 'residual genes_cache != modeled axis'
+    align = np.array([cache_genes.index(g) for g in modeled], dtype=np.int64)
+    rbar_p = np.asarray(rbar_p_all[:, align], dtype=np.float32)   # (n_perts, |modeled|)
+    gbar = np.asarray(gbar_all[align], dtype=np.float32)
 
     gene_axis_pos = {g: i for i, g in enumerate(real.var_names)}
     # 对照子矩阵的列轴 = 全轴（real 未做过列过滤）
@@ -196,13 +208,20 @@ def build_pred(cfg: BenchConfig, vf, gene_ids, vocab: GeneVocab, modeled: list[s
             vf, gene_ids, src_modeled, pert_id_b, cfg.batch_size, cfg.ode_steps,
             cfg.noise_type, getattr(cfg, 'poisson_alpha', 0.8),
             getattr(cfg, 'poisson_target_sum', 1e4), device,
+            clamp_output=False,  # 残差空间可负，禁止 clamp（范式二）
         ).cpu().numpy()
 
-        # 靶基因列置 0（KD 语义，2026-09-17 定案；bridge 内 expm1 前置 0，
-        # 空出的 UMI 预算按组成性重新分配给其他基因）
-        counts = log1p_bridge_to_counts(pred_modeled, src_norm.toarray(), depths,
-                                        modeled_pos_full, stable_seed(cfg.heldout_line, pert, cfg.seed + 7),
-                                        zero_idx=np.array([gene_axis_pos[pert]], dtype=np.int64))
+        # 残差恢复（范式二，2026-09-26）：r̂ = r̄_p − ḡ + Reŝ（r̄_c(RPE1)=0），
+        # counts ~ Poisson(ctrl × 2^{r̂})；靶基因 r̂=−inf → 2^{−inf}=0 → KD 语义
+        assert pert in rbar_p_perts, f'{pert} missing from training rbar_p'
+        p_row = rbar_p_perts.index(pert)
+        rhat = (rbar_p[p_row][None, :] - gbar[None, :]) + pred_modeled   # (n, L)
+        tpos = int(np.nonzero(modeled_pos_full == gene_axis_pos[pert])[0][0])
+        rhat[:, tpos] = -np.inf
+        mean_cts = (src_raw[:, modeled_pos_full].toarray().astype(np.float64)
+                    * np.power(2.0, rhat.astype(np.float64)))
+        counts = np.random.default_rng(
+            stable_seed(cfg.heldout_line, pert, cfg.seed + 7)).poisson(mean_cts).astype(np.float32)
         obs_g = pd.DataFrame({'target_gene': [pert] * counts.shape[0],
                               'context': [cfg.heldout_line] * counts.shape[0],
                               'target': [pert] * counts.shape[0]})

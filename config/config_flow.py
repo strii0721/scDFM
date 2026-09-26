@@ -60,7 +60,7 @@ class FlowConfig:
     # 无内部留出；测试语料 = 独立文件 test_corpus_path（RPE1），benchmark 专用。
     # 原方案仍可用 --split_method=single_line（heldout_line 系留出）或 single（基因留出）。
     split_method: str = 'whole'
-    use_mmd_loss: bool = True      # 论文带 MMD 分布正则（动态多核 RBF）
+    use_mmd_loss: bool = False     # 残差目标范式去 MMD（2026-09-26 用户定案；原论文带动态多核 RBF）
     fold: int = 0
     use_negative_edge: bool = True # 论文 kNN k=30 带符号相关（signed mask）
     topk: int = 30                 # 论文 k=30
@@ -75,6 +75,10 @@ class FlowConfig:
     test_corpus_path: str = REPLOGLE_TEST_PATH  # split_method='whole' 的独立测试语料（benchmark real 侧）
     train_pool_path: str = ''  # 训练每步采样池（非空=基因清单；空串=整个基因轴，含 panel，2026-09-21 定案）
     line_col: str = 'context'   # replogle train 文件 context=K562/Jurkat/HepG2（obs 无 cell_line 列）
+
+    # 残差目标范式（2026-09-26 用户定案）：res_<line>.npy/rbar_p.npy/gbar.npy/combos.csv
+    # 列对齐训练缓存 11,371 基因序（genes_cache.csv）
+    residual_targets_dir: str = 'output/residual_targets'
     heldout_line: str = 'RPE1'  # whole 切分下仅作 benchmark 的 context 标签
     crispr_type_col: str = ''   # replogle 文件无 crispr_type 列；留空直接跳过 CRISPRi 过滤
     crispr_type_value: str = 'CRISPRi'  # 仅当 crispr_type_col 非空时使用（data.py 过滤分支）
@@ -96,6 +100,7 @@ class FlowConfig:
         path = self.make_path()
 
     def make_path(self):
-        # timestamp IS the experiment name: output/train/{YYYY-MM-DD_HH-MM}/
+        # timestamp IS the experiment name: output/train_{YYYY-MM-DD_HH-MM}/
         ts = datetime.now().strftime('%Y-%m-%d_%H-%M')
-        return os.path.join(self.result_path, ts)
+        return os.path.join(os.path.dirname(self.result_path),
+                            os.path.basename(self.result_path) + '_' + ts)

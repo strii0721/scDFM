@@ -693,17 +693,28 @@ def _row_slice_csr(X, rows):
 
 
 class PerturbationDataset(Dataset):
-    def __init__(self, sampler: TrainSampler, batch_size: int):
+    def __init__(self, sampler: TrainSampler, batch_size: int, residual_dir: str = ''):
         self.sampler = sampler
         self.batch_size = batch_size
         self.perturbations = sampler._perturbation_covariates
-        
+
         self.control_idx = (sampler.adata.obs['perturbation_covariates'] == 'control+control').to_numpy().nonzero()[0]
-        
+
+        # 残差目标范式（2026-09-26）：(line, pert) -> res_<line>.npy 行号；
+        # combos.csv 行序按 line 块（同 build_residual_targets.py 落盘序）。
+        self._combo_row_of = {}
+        self._lines_list = []
+        if residual_dir:
+            combos = pd.read_csv(os.path.join(residual_dir, 'combos.csv'))
+            self._lines_list = sorted(combos['line'].unique())
+            for line, grp in combos.groupby('line', sort=False):
+                for i, pert in enumerate(grp['pert'].tolist()):
+                    self._combo_row_of[(line, pert)] = i
+
     def __len__(self):
-        
-        return len(self.perturbations) * 1000 
-    
+
+        return len(self.perturbations) * 1000
+
     def __getitem__(self, idx):
         # 随机选一个 perturbation
         perturbation_idx = np.random.choice(len(self.perturbations), 1)[0]
@@ -716,19 +727,26 @@ class PerturbationDataset(Dataset):
             tgt_idx = self.sampler._tgt_pool[(perturbation_id, line)]
             src_idx = self.sampler._ctl_pool[line]
         else:
+            line = None
             tgt_idx = (self.sampler.adata.obs['perturbation_covariates'] == perturbation_id).to_numpy().nonzero()[0]
             src_idx = self.control_idx
         tgt_batch_idx = np.random.choice(tgt_idx, self.batch_size)
         src_batch_idx = np.random.choice(src_idx, self.batch_size)
         src_batch = torch.from_numpy(_row_slice_csr(self.sampler.adata.X, src_batch_idx).toarray())
         tgt_batch = torch.from_numpy(_row_slice_csr(self.sampler.adata.X, tgt_batch_idx).toarray())
-        
+
+        # 残差目标查表键（pert 条件串 'GENE+control' -> 'GENE'）
+        line_id = self._lines_list.index(line) if line is not None else -1
+        combo_row = self._combo_row_of.get((line, perturbation_id.split('+')[0]), -1)
+
         return {
             'src_cell_data': src_batch,
             'tgt_cell_data': tgt_batch,
             'src_cell_id': list(self.sampler.cells_name[src_batch_idx]),
             'tgt_cell_id': list(self.sampler.cells_name[tgt_batch_idx]),
             'condition_id': torch.tensor(self.sampler.perturbation_covariates_id[tgt_batch_idx]),
+            'line_id': torch.tensor([line_id], dtype=torch.long),
+            'combo_row': torch.tensor([combo_row], dtype=torch.long),
         }
 class BinDiscretizer:
     """

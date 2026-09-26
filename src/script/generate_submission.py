@@ -150,8 +150,11 @@ def _ode_forward(vf, gene_ids, x, t, src_b, pid_b, device,
 
 
 def ode_predict(vf, gene_ids, src_modeled, pert_id_b, batch_size, ode_steps,
-                noise_type, poisson_alpha, poisson_target_sum, device):
-    """从控制谱生成扰动预测（log1p 空间）：噪声源与训练一致 → ODE t:0→1 → clamp≥0。"""
+                noise_type, poisson_alpha, poisson_target_sum, device, clamp_output=True):
+    """从控制谱生成扰动预测：噪声源与训练一致 → ODE t:0→1 → （可选 clamp≥0）。
+
+    clamp_output：旧范式目标=log1p 表达（非负）需 clamp；残差目标范式（2026-09-26）
+    目标=中心化 log2FC 残差（可负），必须 False。"""
     L = gene_ids.shape[0]
     preds = []
     with torch.no_grad():
@@ -178,7 +181,7 @@ def ode_predict(vf, gene_ids, src_modeled, pert_id_b, batch_size, ode_steps,
                 torch.linspace(0, 1, ode_steps, device=device),
                 atol=1e-4, rtol=1e-4, method='euler',
             )
-            preds.append(torch.clamp(traj[-1], min=0).float())
+            preds.append((torch.clamp(traj[-1], min=0) if clamp_output else traj[-1]).float())
     return torch.cat(preds, dim=0)
 
 
