@@ -15,7 +15,6 @@ from src.models.instantiate_model import instantiate_model
 from src.tokenizer.gene_tokenizer import GeneVocab
 from src.models.perturbation.moduls import PerturbationEmbedding
 import pdb
-import tqdm
 from src.flow_matching.path.scheduler import CondOTScheduler
 import scanpy as sc
 import os
@@ -384,7 +383,6 @@ if __name__ == "__main__":
     vf = accelerator.prepare(vf)
     optimizer, scheduler, dataloader = accelerator.prepare(optimizer,scheduler,dataloader)
     inverse_dict = {v: str(k) for k, v in data_manager.perturbation_dict.items()}
-    pbar = tqdm.tqdm(total=config.steps, initial=start_iteration)
     iteration = start_iteration
     while iteration < config.steps:
         for batch_data in dataloader:
@@ -444,8 +442,10 @@ if __name__ == "__main__":
                 
             accelerator.wait_for_everyone()
             
-            pbar.update(1)
-            pbar.set_description(f'loss: {loss.item():.4f}, iteration: {iteration}')
+            # 2026-09-26 用户定案：每 iteration 只打一行（主进程），
+            # 废弃 tqdm 进度条（8 rank 各写一行 + \r 刷屏）
+            if accelerator.is_main_process:
+                print(f'loss: {loss.item():.4f}, iteration: {iteration}', flush=True)
             iteration += 1
             if iteration >= config.steps:
                 break
