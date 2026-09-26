@@ -536,14 +536,29 @@ class TrainSampler:
             self._lines = np.unique(lines)
             for L in self._lines:
                 self._ctl_pool[L] = np.nonzero(np.logical_and(lines == L, pc == 'control+control'))[0]
+            # 2026-09-26 向量化：旧实现逐 (pert, line) 做全列字符串比较
+            # （8,679×3×225 万 ≈ 580 亿次，实测每次训练启动 ~25 min 纯 CPU）
+            # → 每系一次 stable argsort + 边界切分（O(n log n)），池内容完全等价、秒级。
+            elig_map: dict[str, list] = {}
+            for L in self._lines:
+                mask_L = lines == L
+                base = np.nonzero(mask_L)[0]
+                pc_L = pc[mask_L]
+                order = np.argsort(pc_L, kind='stable')
+                spc = pc_L[order]
+                bounds = np.nonzero(spc[1:] != spc[:-1])[0] + 1
+                starts = np.concatenate(([0], bounds))
+                ends = np.concatenate((bounds, [spc.size]))
+                ctl_ok = len(self._ctl_pool[L]) > 0
+                for s, e in zip(starts, ends):
+                    pert = spc[s]
+                    if pert == 'control+control':
+                        continue
+                    if (e - s) >= min_tgt_cells and ctl_ok:
+                        self._tgt_pool[(pert, L)] = base[order[s:e]]
+                        elig_map.setdefault(pert, []).append(L)
             for pert in list(self._perturbation_covariates):
-                elig = []
-                for L in self._lines:
-                    idx = np.nonzero(np.logical_and(lines == L, pc == pert))[0]
-                    if len(idx) >= min_tgt_cells and len(self._ctl_pool[L]) > 0:
-                        self._tgt_pool[(pert, L)] = idx
-                        elig.append(L)
-                self._eligible_lines[pert] = elig
+                self._eligible_lines[pert] = elig_map.get(pert, [])
             dropped = [p for p in self._perturbation_covariates if not self._eligible_lines[p]]
             if dropped:
                 print(f'##### TrainSampler: dropping {len(dropped)} perturbations with no eligible line '

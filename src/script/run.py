@@ -405,7 +405,8 @@ if __name__ == "__main__":
             combo_row = int(batch_data['combo_row'].squeeze(0).item())
             assert combo_row >= 0, f'combo missing from residual table (line_id={line_id})'
             res_target = torch.from_numpy(
-                np.asarray(_res_tables[_res_lines[line_id]][combo_row], dtype=np.float32)).to(device)
+                np.array(_res_tables[_res_lines[line_id]][combo_row], dtype=np.float32)).to(device)
+            # np.array（非 asarray）：mmap 切片非可写，torch 会告警且转出的张量语义不可靠
             
             set_requires_grad_for_p_only(vf, p_only=config.mode)
             loss = train_step(source, target, res_target, perturbation_id, vf, criterion, accelerator, noise_type=config.noise_type, mode=config.mode)
