@@ -31,7 +31,7 @@ class FlowConfig:
     ntoken: int = 11923
     d_model: int = 512
     lr: float = 5e-5              # 论文 Adam lr=5e-5 余弦衰减
-    steps: int = 100000           # 论文 100,000 优化步
+    steps: int = 10000           # 默认 10k（2026-09-26 用户定案：残差范式 ~10k 收敛）；启动可 --steps 覆盖
     eta_min: float = 1e-6         # 论文衰减下界 ηmin=1e-6
     devices: str = "1"
     test_only: bool = False
