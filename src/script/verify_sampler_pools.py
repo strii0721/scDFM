@@ -23,6 +23,9 @@ N_CHECK = 200
 
 a = ad.read_h5ad(CACHE, backed='r')
 obs = a.obs
+# 与 process_data vcc 分支一致：Drug1/Drug2 由 condition 派生（缓存 obs 无这两列）
+obs['Drug1'] = obs['condition'].str.split('+').str[0]
+obs['Drug2'] = obs['condition'].str.split('+').str[-1]
 obs['perturbation_covariates'] = obs[['Drug1', 'Drug2']].apply(lambda x: '+'.join(x), axis=1)
 lines = obs['context'].astype(str).to_numpy()
 pc = obs['perturbation_covariates'].astype(str).to_numpy()
@@ -83,9 +86,15 @@ t_new = time.time() - t0
 print(f'subset check: old={t_old:.1f}s new={t_new:.1f}s '
       f'({len(old_tgt)} vs {len(new_tgt)} pools)', flush=True)
 
-assert set(old_tgt) == set(new_tgt), 'tgt pool key sets differ'
+new_tgt_sub = {k: v for k, v in new_tgt.items() if k[0] in set(sub)}
+only_old = set(old_tgt) - set(new_tgt_sub)
+only_new = set(new_tgt_sub) - set(old_tgt)
+if only_old or only_new:
+    print(f'DIAG only_old={len(only_old)} e.g. {list(only_old)[:5]}', flush=True)
+    print(f'DIAG only_new={len(only_new)} e.g. {list(only_new)[:5]}', flush=True)
+assert not only_old and not only_new, 'tgt pool key sets differ'
 for k in old_tgt:
-    assert np.array_equal(old_tgt[k], new_tgt[k]), f'index mismatch {k}'
+    assert np.array_equal(old_tgt[k], new_tgt_sub[k]), f'index mismatch {k}'
 for p in sub:
     assert old_elig[p] == new_elig[p], f'elig mismatch {p}'
 print(f'SUBSET EQUIVALENT: {len(old_tgt)} pools identical over {N_CHECK} perts', flush=True)
