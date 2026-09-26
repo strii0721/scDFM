@@ -26,10 +26,12 @@ export PYTHONUNBUFFERED=1
 # rank3 backward OOM：72.85 在用 + 需 7.71）。expandable_segments 让空闲段可
 # 合并复用（torch 2.7 支持），探针实测 B=2=71GB 即含本变量。
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-# 日志统一 logs/train_{YYYY-MM-DD_HH-MM}.log（2026-09-22 定案：分钟粒度，同日多次
-# 启动不互踩；同分钟两次启动仍会同名——极端场景先归档旧文件）
-mkdir -p logs
-exec > >(tee "logs/train_$(date +%F_%H-%M).log") 2>&1
+# 日志/输出统一阶段+时间戳目录（2026-09-26 用户定案）：logs/train_{ts}/ + output/train_{ts}/，
+# ts=任务启动时刻；make_path 读同一变量（SCDFM_RUN_TS）保证二者同名对应。
+export SCDFM_RUN_TS="${SCDFM_RUN_TS:-$(date +%F_%H-%M)}"
+LOG_DIR="logs/train_${SCDFM_RUN_TS}"
+mkdir -p "$LOG_DIR"
+exec > >(tee "$LOG_DIR/train.log") 2>&1
 
 GPUS="${GPUS:-8}"
 # 2026-09-21：全轴缓存每 rank RAM ~61GB（int64→int32 索引后）。共享机 1TB 内存

@@ -101,6 +101,7 @@ class FlowConfig:
 
     def make_path(self):
         # timestamp IS the experiment name: output/train_{YYYY-MM-DD_HH-MM}/
-        ts = datetime.now().strftime('%Y-%m-%d_%H-%M')
+        # SCDFM_RUN_TS（train.sh 启动时刻导出）保证与 logs/train_{ts} 同名对应
+        ts = os.environ.get('SCDFM_RUN_TS') or datetime.now().strftime('%Y-%m-%d_%H-%M')
         return os.path.join(os.path.dirname(self.result_path),
                             os.path.basename(self.result_path) + '_' + ts)
