@@ -388,6 +388,7 @@ if __name__ == "__main__":
         for batch_data in dataloader:
             
             source = batch_data['src_cell_data'].squeeze(0)
+            it_t0 = time.time()   # 本 iteration 计时（打印处算耗时，2026-09-26 用户定案）
             target = batch_data['tgt_cell_data'].squeeze(0)
             perturbation_id = batch_data['condition_id'].squeeze(0).to(device)
             if config.perturbation_function == 'crisper':
@@ -443,9 +444,11 @@ if __name__ == "__main__":
             accelerator.wait_for_everyone()
             
             # 2026-09-26 用户定案：每 iteration 只打一行（主进程），
-            # 废弃 tqdm 进度条（8 rank 各写一行 + \r 刷屏）
+            # 废弃 tqdm 进度条（8 rank 各写一行 + \r 刷屏）；
+            # 格式：loss + 进度 n/N + 本 iteration 耗时（含 checkpoint 保存等事件）
             if accelerator.is_main_process:
-                print(f'loss: {loss.item():.4f}, iteration: {iteration}', flush=True)
+                print(f'loss: {loss.item():.4f}, iteration: {iteration}/{config.steps}, '
+                      f'{time.time() - it_t0:.2f}s/it', flush=True)
             iteration += 1
             if iteration >= config.steps:
                 break
