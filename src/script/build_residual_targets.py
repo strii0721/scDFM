@@ -11,7 +11,7 @@
 推理恢复（用户定案）：r̂ = 0 + r̄_p − ḡ + Reŝ（r̄_c(RPE1) 取 0，r̄_p/ḡ 用训练集常量）
 单系扰动的 Res = ḡ − r̄_c 为常量（退化，用户接受）。
 
-产物（output/residual_targets/，列对齐训练缓存 11,371 基因序）：
+产物（tmp/residual_targets/，中间缓存文件非最终输出；列对齐训练缓存 11,371 基因序）：
   combos.csv          (line, pert, row) —— row = res_<line>.npy 行号
   res_<line>.npy      float32 (n_perts_line, 11371)
   rbar_p.npy          float32 (n_perts_unique, 11371)；rbar_p_perts.csv 行名
@@ -25,7 +25,7 @@
   .venv/bin/python -u src/script/build_residual_targets.py \
       --adata_path /home/ict2/Projects/vcc-2026/resources/datasets/replogle/replogle_k562_jurkat_hepg2.h5ad \
       --cache_meta tmp/vcc/processed_n11919_replogle_k562_jurkat_hepg2_all.h5ad.meta.h5ad \
-      --out_dir output/residual_targets
+      --out_dir tmp/residual_targets
 """
 import argparse
 import os
@@ -61,7 +61,7 @@ def main() -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--adata_path', required=True)
     ap.add_argument('--cache_meta', required=True)
-    ap.add_argument('--out_dir', default='output/residual_targets')
+    ap.add_argument('--out_dir', default='tmp/residual_targets')
     args = ap.parse_args()
     _self_log('residual_targets')
     os.makedirs(args.out_dir, exist_ok=True)

@@ -77,8 +77,8 @@ class FlowConfig:
     line_col: str = 'context'   # replogle train 文件 context=K562/Jurkat/HepG2（obs 无 cell_line 列）
 
     # 残差目标范式（2026-09-26 用户定案）：res_<line>.npy/rbar_p.npy/gbar.npy/combos.csv
-    # 列对齐训练缓存 11,371 基因序（genes_cache.csv）
-    residual_targets_dir: str = 'output/residual_targets'
+    # 列对齐训练缓存 11,371 基因序（genes_cache.csv）；中间缓存文件，放 tmp/ 而非 output/
+    residual_targets_dir: str = 'tmp/residual_targets'
     heldout_line: str = 'RPE1'  # whole 切分下仅作 benchmark 的 context 标签
     crispr_type_col: str = ''   # replogle 文件无 crispr_type 列；留空直接跳过 CRISPRi 过滤
     crispr_type_value: str = 'CRISPRi'  # 仅当 crispr_type_col 非空时使用（data.py 过滤分支）

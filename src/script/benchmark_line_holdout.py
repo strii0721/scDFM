@@ -75,7 +75,7 @@ class BenchConfig(FlowConfig):
     reuse_real: bool = False # real.h5ad 已存在则直接读，不重扫语料
     eval_out_dir: str = ''   # eval_only 产物目录（空=out_dir）；部分 eval 用它避免污染最终 scores.csv
     parts_only: bool = False # 只写 predparts 基因级 part，不写整片合并 pred{tag}.h5ad（守护分发单基因 worker）
-    residual_dir: str = 'output/residual_targets'  # 范式二常量（rbar_p/gbar/genes_cache，2026-09-26）
+    residual_dir: str = 'tmp/residual_targets'  # 范式二常量（rbar_p/gbar/genes_cache；中间缓存，2026-09-26）
 
 
 def _cli_bin() -> str:
